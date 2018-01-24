@@ -1,3 +1,7 @@
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot
+
 import argparse
 import os.path
 import os
@@ -7,18 +11,66 @@ import time
 
 import cv2
 import numpy as np
+import scipy.signal
+import pydot_ng as pydot
 
 from datagen import get_mutations, create_empty_directory
 from uuid import uuid4
 
 from keras.models import Model, model_from_json
 from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization, Input, Embedding, concatenate
+import keras.callbacks
 import keras.utils
 
 print(keras.__version__)
 print('initialized')
 
 ARGS = None
+
+class TrainHistory(keras.callbacks.Callback):
+    def __init__(self, args):
+        self.max_len = 1024
+        self.epoch = 1
+        self.epochs = []
+        self.losses = []
+        self.acc = []
+
+        mptype = args.model_prototype
+        model_dir = os.path.normpath(args.model_dir)
+        self.graph_path = os.path.join(model_dir, mptype + '-history.png')
+
+    def on_train_end(self, logs={}):
+        print('epoch:', self.epoch, 'loss:', self.losses[-1], 'acc:', self.acc[-1])
+
+        try:
+            if len(self.epochs) >= self.max_len:
+                self.epochs = list(np.array(self.epochs)[::2])[:int(self.max_len/2)]
+                self.losses = list(scipy.signal.resample(self.losses, int(self.max_len/2)))
+                self.acc = list(scipy.signal.resample(self.acc, int(self.max_len/2)))
+
+            epochs = np.array(self.epochs)
+            losses = np.array(self.losses)
+            acc = np.array(self.acc)
+
+            fig, ax = matplotlib.pyplot.subplots()
+            ax.plot(epochs, losses, 'r:', label='Loss', linewidth=1.0)
+            ax.plot(epochs, acc, 'g', label='Accuracy', linewidth=1.0)
+
+            #legend = ax.legend(loc='upper right', shadow=False, fontsize='x-medium')
+            #legend.get_frame().set_facecolor('#BBFFCC')
+            ax.set(xlabel='epochs', ylabel='',
+                title='Training history')
+            ax.grid()
+
+            fig.savefig(self.graph_path)
+        except Exception:
+            pass
+
+    def on_epoch_end(self, epoch, logs={}):
+        self.epochs.append(self.epoch)
+        self.losses.append(logs.get('loss'))
+        self.acc.append(logs.get('acc'))
+        self.epoch += 1
 
 def preview_input(class_ids):
     for classid in list(class_ids.keys()):
@@ -39,7 +91,7 @@ def preview_input(class_ids):
 
 def get_model(input_shape, num_classes, model_dir, args):
     model_prototypes = {
-        'lite' : [24, 48, 2, 2, 100, 50],
+        'base' : [24, 48, 2, 2, 100, 50],
     }
     mptype = args.model_prototype
     f1 = model_prototypes[mptype][0]
@@ -49,13 +101,15 @@ def get_model(input_shape, num_classes, model_dir, args):
     fc1 = model_prototypes[mptype][4]
     fc2 = model_prototypes[mptype][5]
 
-    model_path = os.path.join(model_dir, 'lenet5.json')
+    model_path = os.path.join(model_dir, mptype + '.json')
     model = None
     if os.path.exists(model_path) and not args.reset:
         # Load model from file
         with open(model_path, 'r') as model_file:
             model_json = model_file.read()
             model = model_from_json(model_json)
+        print()
+        print('Model loaded from', model_path)
     else:
         # Define LeNet multi-scale model
         in_raw = Input(shape=input_shape) # Raw images as source input
@@ -86,6 +140,10 @@ def get_model(input_shape, num_classes, model_dir, args):
         with open(model_path, 'w') as model_file:
             model_file.write(model_json)
 
+    # Save model plot
+    graph_path = os.path.join(model_dir, mptype + '-model.png')
+    keras.utils.plot_model(model, to_file=graph_path)
+
     model.compile(optimizer='adam',
         loss='categorical_crossentropy',
         metrics=['accuracy'])
@@ -94,12 +152,22 @@ def get_model(input_shape, num_classes, model_dir, args):
 
 
 def train_or_load(model, input_shape, class_ids, model_dir, args):
+    train_parameters = {
+        'base' : [65536, 64, 8],
+    }
+    mptype = args.model_prototype
+    iterations = train_parameters[mptype][0]
+    batch_size = train_parameters[mptype][1]
+    epochs = train_parameters[mptype][2]
+
     num_classes = len(class_ids)
 
-    weights_path = os.path.join(model_dir, 'lenet5.weights')
+    weights_path = os.path.join(model_dir, mptype + '.weights')
     if os.path.exists(weights_path) and not args.reset:
         # Load weights from file
         model.load_weights(weights_path)
+        print()
+        print('Weights loaded from', weights_path)
     else:
         if args.dummy:
             # Generate random dummy data for verification of model definition
@@ -124,18 +192,19 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             random.shuffle(samples)
 
             sample_offset = 0
-            for i in range(args.iterations):
+            history = TrainHistory(args)
+            for i in range(iterations):
                 # Load training data from filesystem
-                data = np.zeros((args.samples_per_iteration,)+input_shape)
-                labels = np.zeros((args.samples_per_iteration, 1))
+                data = np.zeros((batch_size,)+input_shape)
+                labels = np.zeros((batch_size, 1))
                 data_index = 0
                 sample_pointer = sample_offset
 
                 print()
-                print('Iteration:', i, 'of', args.iterations)
-                print('Time elapsed:', int(time.time())-now)
-                print('Loading', args.samples_per_iteration, 'samples starting at', sample_pointer)
-                for i in range(args.samples_per_iteration):
+                print('Iteration:', i, 'of', iterations)
+                print('Time elapsed:', int(time.time())-now, 'sec')
+                print('Loading', batch_size, 'samples starting at', sample_pointer)
+                for i in range(batch_size):
                     class_id = samples[sample_pointer][1]
                     sample_path = samples[sample_pointer][2]
                     sample = get_mutations(sample_path, 1)[0]
@@ -153,23 +222,17 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
 
                 # Train the model
                 print('Training...')
-                model.fit(data, one_hot_labels, batch_size=32, epochs=args.epoch, verbose=1)
+                model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0, callbacks=[history])
                 #model.train_on_batch(data, one_hot_labels)
 
                 model.save_weights(weights_path)
     
 def main():
-    print('run')
     class_ids = list()
     srcdir = os.path.normpath(ARGS.src)
     pathlist = os.listdir(srcdir)
     for path in pathlist:
         class_ids.append(int(path))
-
-    # Testing getting image mutations
-    if ARGS.preview:
-        preview_input(class_ids)
-        return
 
     num_classes = len(class_ids)
 
@@ -179,12 +242,9 @@ def main():
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
-    model_path = os.path.join(model_dir, 'lenet5.json')
-
     model = get_model(input_shape, num_classes, model_dir, ARGS)
 
     train_or_load(model, input_shape, class_ids, model_dir, ARGS)
-    return
 
     # Load testing data
     batch_size = 500
@@ -208,21 +268,21 @@ def main():
         data_index += 1
         total_count += 1
         if data_index==500:
-            predictions = model.predict_classes(data)
+            predictions = model.predict(data)
+            predictions = np.argmax(predictions, axis=1)
             predictions = np.column_stack((np.array(file_list), np.array(predictions), np.array(class_list)))
-            #print(predictions)
             for file_path, prediction, class_id in predictions:
                 if prediction!=class_id:
                     errors += 1
                     print(file_path, prediction, class_id)
-                    print(errors/total_count*100, '%')
+                    print('Error rate:', errors/total_count)
             file_list = list()
             class_list = list()
             data_index = 0
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
-        Clean up images and transform to generate more samples""")
+        Train the model""")
     parser.add_argument(
         '--src',
         type=str,
@@ -238,13 +298,13 @@ if __name__== "__main__":
     parser.add_argument(
         '--model_dir',
         type=str,
-        default='../../models',
+        default='../../models/lenet',
         help='Path to directory of models and weights.'
     )
     parser.add_argument(
         '--model_prototype',
         type=str,
-        default='lite',
+        default='base',
         help='The name of model prototype to use with pre-defined hyperparameters.'
     )
     parser.add_argument(
@@ -254,33 +314,10 @@ if __name__== "__main__":
         help='Target dimension of prepared samples.'
     )
     parser.add_argument(
-        '--iterations',
-        type=int,
-        default=1024,
-        help='Number of iterations to run keras fit().'
-    )
-    parser.add_argument(
-        '--samples_per_iteration',
-        type=int,
-        default=256,
-        help='Target dimension of prepared samples.'
-    )
-    parser.add_argument(
-        '--epoch',
-        type=int,
-        default=16,
-        help='Target dimension of prepared samples.'
-    )
-    parser.add_argument(
         '--mintensity',
         type=float,
         default=1,
         help='The intensity of mutation.'
-    )
-    parser.add_argument(
-        '--preview',
-        action='store_true',
-        help='Get random samples for preview.'
     )
     parser.add_argument(
         '--reset',
