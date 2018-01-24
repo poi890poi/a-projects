@@ -3,6 +3,7 @@ import os.path
 import os
 from pathlib import Path
 import random
+import time
 
 import cv2
 import numpy as np
@@ -10,8 +11,8 @@ import numpy as np
 from datagen import get_mutations, create_empty_directory
 from uuid import uuid4
 
-from keras.models import Sequential, model_from_json
-from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization, Input, Embedding
+from keras.models import Model, model_from_json
+from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization, Input, Embedding, concatenate
 import keras.utils
 
 print(keras.__version__)
@@ -56,20 +57,30 @@ def get_model(input_shape, num_classes, model_dir, args):
             model_json = model_file.read()
             model = model_from_json(model_json)
     else:
-        # Define LeNet-5 model
-        model = Sequential()
-        model.add(Conv2D(f1, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape))
-        model.add(MaxPooling2D(pool_size=(p1, p1)))
+        # Define LeNet multi-scale model
+        in_raw = Input(shape=input_shape) # Raw images as source input
+        x = Conv2D(f1, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape)(in_raw)
+        x = MaxPooling2D(pool_size=(p1, p1))(x)
 
-        model.add(Conv2D(f2, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape))
-        model.add(MaxPooling2D(pool_size=(p2, p2)))
+        # Define output of stage-1
+        in_s1 = Flatten()(x)
 
-        model.add(Flatten())
-        model.add(Dense(fc1, activation = 'relu'))
-        model.add(Dropout(0.5))
-        model.add(Dense(fc2, activation = 'relu'))
-        model.add(Dropout(0.5))
-        model.add(Dense(num_classes, activation = 'softmax'))
+        # Begin of stage-2
+        x = Conv2D(f2, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape)(x)
+        x = MaxPooling2D(pool_size=(p2, p2))(x)
+        x = Flatten()(x)
+
+        # Concatenate outputs from stage-1 and stage-2
+        x = concatenate([x, in_s1])
+
+        # Use 2 fully-connected layers
+        x = Dense(fc1, activation = 'relu')(x)
+        x = Dropout(0.5)(x)
+        x = Dense(fc2, activation = 'relu')(x)
+        x = Dropout(0.5)(x)
+        predictions = Dense(num_classes, activation = 'softmax')(x)
+
+        model = Model(inputs=in_raw, outputs=predictions)
 
         model_json = model.to_json()
         with open(model_path, 'w') as model_file:
@@ -100,6 +111,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             # Get list of proto-samples and shuffle them
             print()
             print('Getting sample files list...')
+            now = int(time.time())
             samples = list()
             srcdir = os.path.normpath(args.src)
             pathlist = sorted(Path(srcdir).glob('**/*.ppm'))
@@ -121,6 +133,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
 
                 print()
                 print('Iteration:', i, 'of', args.iterations)
+                print('Time elapsed:', int(time.time())-now)
                 print('Loading', args.samples_per_iteration, 'samples starting at', sample_pointer)
                 for i in range(args.samples_per_iteration):
                     class_id = samples[sample_pointer][1]
