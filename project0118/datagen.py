@@ -248,7 +248,8 @@ def parse_annotations(directory, is_test, dir_dest):
                             if is_test:
                                 outname = filename
                             else:
-                                outname = str(item_class).zfill(4) + '-' + str(filename_seq[item_class]).zfill(6) + '.ppm'
+                                #outname = str(item_class).zfill(4) + '-' + str(filename_seq[item_class]).zfill(6) + '.ppm'
+                                outname = str(uuid4()) + '.ppm' # Randomized names effectively randomize file order
                                 filename_seq[item_class] += 1
 
                             outpath = os.path.normpath(os.path.join(outdir, outname))

@@ -36,10 +36,21 @@ def preview_input(class_ids):
             sample_count -= 1
             if sample_count==0: break
 
-def get_model(input_shape, num_classes, model_dir, reset):
+def get_model(input_shape, num_classes, model_dir, args):
+    model_prototypes = {
+        'lite' : [24, 48, 2, 2, 100, 50],
+    }
+    mptype = args.model_prototype
+    f1 = model_prototypes[mptype][0]
+    f2 = model_prototypes[mptype][1]
+    p1 = model_prototypes[mptype][2]
+    p2 = model_prototypes[mptype][3]
+    fc1 = model_prototypes[mptype][4]
+    fc2 = model_prototypes[mptype][5]
+
     model_path = os.path.join(model_dir, 'lenet5.json')
     model = None
-    if os.path.exists(model_path) and not reset:
+    if os.path.exists(model_path) and not args.reset:
         # Load model from file
         with open(model_path, 'r') as model_file:
             model_json = model_file.read()
@@ -47,18 +58,16 @@ def get_model(input_shape, num_classes, model_dir, reset):
     else:
         # Define LeNet-5 model
         model = Sequential()
-        model.add(Conv2D(108, (5, 5), activation = 'tanh', input_shape=input_shape))
-        model.add(BatchNormalization())
-        model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Conv2D(f1, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape))
+        model.add(MaxPooling2D(pool_size=(p1, p1)))
 
-        model.add(Conv2D(200, (5, 5), activation = 'tanh', input_shape=input_shape))
-        model.add(BatchNormalization())
-        model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Conv2D(f2, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape))
+        model.add(MaxPooling2D(pool_size=(p2, p2)))
 
         model.add(Flatten())
-        model.add(Dense(100, activation = 'tanh'))
+        model.add(Dense(fc1, activation = 'relu'))
         model.add(Dropout(0.5))
-        model.add(Dense(100, activation = 'tanh'))
+        model.add(Dense(fc2, activation = 'relu'))
         model.add(Dropout(0.5))
         model.add(Dense(num_classes, activation = 'softmax'))
 
@@ -72,6 +81,7 @@ def get_model(input_shape, num_classes, model_dir, reset):
 
     return model
 
+
 def train_or_load(model, input_shape, class_ids, model_dir, args):
     num_classes = len(class_ids)
 
@@ -80,39 +90,60 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
         # Load weights from file
         model.load_weights(weights_path)
     else:
-        for i in range(args.iterations):
-            # Prepare training data
-            if args.dummy:
-                # Generate random dummy data for verification of model definition
-                data = np.random.random((1000,)+input_shape)
-                labels = np.random.randint(num_classes, size=(1000, 1))
-            else:
-                # Load trainging data from filesystem
-                print(num_classes, args.samples_per_class)
-                num_samples = num_classes * args.samples_per_class
-                data = np.zeros((num_samples,)+input_shape)
-                labels = np.zeros((num_samples, 1))
-                data_index = 0
-                print('data shape', data.shape)
-                for class_id in class_ids:
-                    srcdir = os.path.normpath(os.path.join(os.path.normpath(args.src), str(class_id)))
-                    pathlist = os.listdir(srcdir)
-                    random.shuffle(pathlist)
-                    for filename in pathlist[:args.samples_per_class]:
-                        sample_path = os.path.normpath(os.path.join(srcdir, filename))
-                        sample = get_mutations(sample_path, 1)[0]
-                        sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
-                        data[data_index] = sample
-                        labels[data_index] = class_id
-                        data_index += 1
-                        if data_index%500:
-                            print(data_index, '/', num_samples)
+        if args.dummy:
+            # Generate random dummy data for verification of model definition
+            data = np.random.random((1000,)+input_shape)
+            labels = np.random.randint(num_classes, size=(1000, 1))
             one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
-
-            # Train the model
             model.fit(data, one_hot_labels, batch_size=32, epochs=args.epoch, verbose=1)
+        else:
+            # Get list of proto-samples and shuffle them
+            print()
+            print('Getting sample files list...')
+            samples = list()
+            srcdir = os.path.normpath(args.src)
+            pathlist = sorted(Path(srcdir).glob('**/*.ppm'))
+            for path in pathlist:
+                # A image folder with .csv file (annotations)
+                path_in_str = str(path)
+                sample_dir, sample_filename = os.path.split(path_in_str)
+                class_id = os.path.split(sample_dir)[1]
+                samples.append([sample_filename, class_id, path_in_str])
+            random.shuffle(samples)
 
-        model.save_weights(weights_path)
+            sample_offset = 0
+            for i in range(args.iterations):
+                # Load training data from filesystem
+                data = np.zeros((args.samples_per_iteration,)+input_shape)
+                labels = np.zeros((args.samples_per_iteration, 1))
+                data_index = 0
+                sample_pointer = sample_offset
+
+                print()
+                print('Iteration:', i, 'of', args.iterations)
+                print('Loading', args.samples_per_iteration, 'samples starting at', sample_pointer)
+                for i in range(args.samples_per_iteration):
+                    class_id = samples[sample_pointer][1]
+                    sample_path = samples[sample_pointer][2]
+                    sample = get_mutations(sample_path, 1)[0]
+                    sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
+                    data[i] = sample
+                    labels[i] = class_id
+
+                    sample_pointer += 1
+                    if sample_pointer>=len(samples): sample_pointer = 0
+
+                sample_offset = sample_pointer
+                if sample_offset>=len(samples): sample_offset = 0
+        
+                one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
+
+                # Train the model
+                print('Training...')
+                model.fit(data, one_hot_labels, batch_size=32, epochs=args.epoch, verbose=1)
+                #model.train_on_batch(data, one_hot_labels)
+
+                model.save_weights(weights_path)
     
 def main():
     print('run')
@@ -128,7 +159,6 @@ def main():
         return
 
     num_classes = len(class_ids)
-    print('list', class_ids)
 
     input_shape = (ARGS.dimension, ARGS.dimension, 1)
 
@@ -138,9 +168,10 @@ def main():
 
     model_path = os.path.join(model_dir, 'lenet5.json')
 
-    model = get_model(input_shape, num_classes, model_dir, ARGS.reset)
+    model = get_model(input_shape, num_classes, model_dir, ARGS)
 
     train_or_load(model, input_shape, class_ids, model_dir, ARGS)
+    return
 
     # Load testing data
     batch_size = 500
@@ -198,6 +229,12 @@ if __name__== "__main__":
         help='Path to directory of models and weights.'
     )
     parser.add_argument(
+        '--model_prototype',
+        type=str,
+        default='lite',
+        help='The name of model prototype to use with pre-defined hyperparameters.'
+    )
+    parser.add_argument(
         '--dimension',
         type=int,
         default=32,
@@ -206,19 +243,19 @@ if __name__== "__main__":
     parser.add_argument(
         '--iterations',
         type=int,
-        default=20,
+        default=1024,
         help='Number of iterations to run keras fit().'
     )
     parser.add_argument(
-        '--samples_per_class',
+        '--samples_per_iteration',
         type=int,
-        default=100,
+        default=256,
         help='Target dimension of prepared samples.'
     )
     parser.add_argument(
         '--epoch',
         type=int,
-        default=100,
+        default=16,
         help='Target dimension of prepared samples.'
     )
     parser.add_argument(
