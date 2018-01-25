@@ -18,7 +18,7 @@ from datagen import get_mutations, create_empty_directory
 from uuid import uuid4
 
 from keras.models import Model, model_from_json
-from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization, Input, Embedding, concatenate
+from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Activation, BatchNormalization, Input, Embedding, concatenate
 import keras.callbacks
 import keras.utils
 
@@ -29,6 +29,8 @@ ARGS = None
 
 class TrainHistory(keras.callbacks.Callback):
     def __init__(self, args):
+        self.sampling_window = 16
+        self.sampling_count = self.sampling_window
         self.max_len = 1024
         self.epoch = 1
         self.epochs = []
@@ -39,22 +41,21 @@ class TrainHistory(keras.callbacks.Callback):
         model_dir = os.path.normpath(args.model_dir)
         self.graph_path = os.path.join(model_dir, mptype + '-history.png')
 
-    def on_train_end(self, logs={}):
-        print('epoch:', self.epoch, 'loss:', self.losses[-1], 'acc:', self.acc[-1])
-
+    def update_graph(self):
         try:
-            if len(self.epochs) >= self.max_len:
+            '''if len(self.epochs) >= self.max_len:
                 self.epochs = list(np.array(self.epochs)[::2])[:int(self.max_len/2)]
                 self.losses = list(scipy.signal.resample(self.losses, int(self.max_len/2)))
-                self.acc = list(scipy.signal.resample(self.acc, int(self.max_len/2)))
+                self.acc = list(scipy.signal.resample(self.acc, int(self.max_len/2)))'''
 
             epochs = np.array(self.epochs)
             losses = np.array(self.losses)
             acc = np.array(self.acc)
 
             fig, ax = matplotlib.pyplot.subplots()
-            ax.plot(epochs, losses, 'r:', label='Loss', linewidth=1.0)
-            ax.plot(epochs, acc, 'g', label='Accuracy', linewidth=1.0)
+            x_axis = range(len(losses))
+            ax.plot(x_axis, losses, 'r:', label='Loss', linewidth=1.0)
+            ax.plot(x_axis, acc, 'g', label='Accuracy', linewidth=1.0)
 
             #legend = ax.legend(loc='upper right', shadow=False, fontsize='x-medium')
             #legend.get_frame().set_facecolor('#BBFFCC')
@@ -67,10 +68,20 @@ class TrainHistory(keras.callbacks.Callback):
             pass
 
     def on_epoch_end(self, epoch, logs={}):
-        self.epochs.append(self.epoch)
-        self.losses.append(logs.get('loss'))
-        self.acc.append(logs.get('acc'))
-        self.epoch += 1
+        loss = logs.get('loss')
+        acc = logs.get('acc')
+        if self.sampling_count>=self.sampling_window:
+            # Expand history list
+            self.losses.append(logs.get('loss'))
+            self.acc.append(logs.get('acc'))
+            self.sampling_count = 1
+        else:
+            # Valculate averaged data
+            pt = len(self.losses) - 1
+            self.losses[pt] = (self.losses[pt] * self.sampling_count + loss) / (self.sampling_count+1)
+            self.acc[pt] = (self.acc[pt] * self.sampling_count + acc) / (self.sampling_count+1)
+            self.sampling_count += 1
+            self.update_graph()
 
 def preview_input(class_ids):
     for classid in list(class_ids.keys()):
@@ -91,8 +102,13 @@ def preview_input(class_ids):
 
 def get_model(input_shape, num_classes, model_dir, args):
     model_prototypes = {
-        'base' : [24, 48, 2, 2, 100, 50],
+        'ss' : [32, 64, 2, 4, 400, 400, 0],
+        'mm' : [32, 64, 2, 4, 400, 400, 2],
+        'bn' : [32, 64, 2, 4, 400, 400, 3],
     }
+    FLAG_BATCHNORMALIZATION = 1
+    FLAG_MULTISCALE = 2
+    FLAG_EARLYSTOP = 4
     mptype = args.model_prototype
     f1 = model_prototypes[mptype][0]
     f2 = model_prototypes[mptype][1]
@@ -100,6 +116,7 @@ def get_model(input_shape, num_classes, model_dir, args):
     p2 = model_prototypes[mptype][3]
     fc1 = model_prototypes[mptype][4]
     fc2 = model_prototypes[mptype][5]
+    flags = model_prototypes[mptype][6]
 
     model_path = os.path.join(model_dir, mptype + '.json')
     model = None
@@ -113,26 +130,36 @@ def get_model(input_shape, num_classes, model_dir, args):
     else:
         # Define LeNet multi-scale model
         in_raw = Input(shape=input_shape) # Raw images as source input
-        x = Conv2D(f1, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape)(in_raw)
-        x = MaxPooling2D(pool_size=(p1, p1))(x)
+        x = Conv2D(f1, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_1')(in_raw)
+        x = BatchNormalization()(x)
+        x = Activation('relu', name='relu_1')(x)
+        x = MaxPooling2D(pool_size=(p1, p1), name='maxpool_1')(x)
 
         # Define output of stage-1
         in_s1 = Flatten()(x)
 
         # Begin of stage-2
-        x = Conv2D(f2, (5, 5), activation = 'relu', kernel_initializer='glorot_normal', input_shape=input_shape)(x)
-        x = MaxPooling2D(pool_size=(p2, p2))(x)
+        x = Conv2D(f2, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_2')(x)
+        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        x = Activation('relu', name='relu_2')(x)
+        x = MaxPooling2D(pool_size=(p2, p2), name='maxpool_2')(x)
         x = Flatten()(x)
 
         # Concatenate outputs from stage-1 and stage-2
-        x = concatenate([x, in_s1])
+        if (flags&FLAG_MULTISCALE): x = concatenate([x, in_s1])
 
         # Use 2 fully-connected layers
-        x = Dense(fc1, activation = 'relu')(x)
+        x = Dense(fc1, name='fc_1')(x)
+        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        x = Activation('relu')(x)
         x = Dropout(0.5)(x)
-        x = Dense(fc2, activation = 'relu')(x)
+        x = Dense(fc2, name='fc_2')(x)
+        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        x = Activation('relu')(x)
         x = Dropout(0.5)(x)
-        predictions = Dense(num_classes, activation = 'softmax')(x)
+        x = Dense(num_classes)(x)
+        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        predictions = Activation('softmax', name='softmax')(x)
 
         model = Model(inputs=in_raw, outputs=predictions)
 
@@ -153,7 +180,9 @@ def get_model(input_shape, num_classes, model_dir, args):
 
 def train_or_load(model, input_shape, class_ids, model_dir, args):
     train_parameters = {
-        'base' : [65536, 64, 8],
+        'ss' : [1024, 64, 8],
+        'mm' : [1024, 64, 8],
+        'bn' : [1024, 64, 8],
     }
     mptype = args.model_prototype
     iterations = train_parameters[mptype][0]
@@ -174,11 +203,11 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             data = np.random.random((1000,)+input_shape)
             labels = np.random.randint(num_classes, size=(1000, 1))
             one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
-            model.fit(data, one_hot_labels, batch_size=32, epochs=args.epoch, verbose=1)
+            model.fit(data, one_hot_labels, batch_size=batch_size, epochs=args.epoch, verbose=1)
         else:
             # Get list of proto-samples and shuffle them
             print()
-            print('Getting sample files list...')
+            print('Getting sample file list...')
             now = int(time.time())
             samples = list()
             srcdir = os.path.normpath(args.src)
@@ -191,6 +220,40 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
                 samples.append([sample_filename, class_id, path_in_str])
             random.shuffle(samples)
 
+            validation_data = []
+            validation_labels = []
+            if args.validation:
+                print()
+                print('Shuffling validation data...')
+                # Sampling random data from directory of test images
+                pathlist = Path(os.path.normpath(args.validation)).glob('**/*.ppm')
+                entry_list = list()
+                for path in pathlist:
+                    imgpath = str(path)
+                    head, tail = os.path.split(imgpath)
+                    head, tail = os.path.split(head)
+                    class_id = int(tail)
+                    entry_list.append([class_id, imgpath])
+                random.shuffle(entry_list)
+
+                # Load validation data
+                print('Loading validation data...')
+                validation_size = batch_size
+                entry_list = entry_list[:validation_size]
+                validation_data = np.zeros((validation_size,)+input_shape)
+                labels = np.zeros((validation_size, 1))
+                data_index = 0
+                for data_entry in entry_list:
+                    class_id = data_entry[0]
+                    imgpath = data_entry[1]
+                    sample = cv2.imread(imgpath, 0)
+                    sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
+                    validation_data[data_index] = sample
+                    labels[data_index] = class_id
+                    data_index += 1
+                validation_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
+
+            # Iterations of training
             sample_offset = 0
             history = TrainHistory(args)
             for i in range(iterations):
@@ -221,8 +284,13 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
                 one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
 
                 # Train the model
-                print('Training...')
-                model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0, callbacks=[history])
+                if len(validation_data) and len(validation_labels):
+                    print('Training with validation data...')
+                    model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0,
+                        callbacks=[history], validation_data=(validation_data, validation_labels))
+                else:
+                    print('Training...')
+                    model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0, callbacks=[history])
                 #model.train_on_batch(data, one_hot_labels)
 
                 model.save_weights(weights_path)
@@ -290,6 +358,12 @@ if __name__== "__main__":
         help='Path to source directory of training images.'
     )
     parser.add_argument(
+        '--validation',
+        type=str,
+        default='../../data/GTSRB/processed/test',
+        help='Path to source directory of validation images.'
+    )
+    parser.add_argument(
         '--test_dir',
         type=str,
         default='../../data/GTSRB/processed/test',
@@ -304,7 +378,7 @@ if __name__== "__main__":
     parser.add_argument(
         '--model_prototype',
         type=str,
-        default='base',
+        default='ss',
         help='The name of model prototype to use with pre-defined hyperparameters.'
     )
     parser.add_argument(
