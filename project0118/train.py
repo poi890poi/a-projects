@@ -27,43 +27,63 @@ print('initialized')
 
 ARGS = None
 
+"""
+class ModelCheckpoint(keras.callbacks.Callback):
+    def __init__(self, monitor='val_loss', value=0.00001, verbose=0):
+          ModelCheckpoint(weights_path, monitor='val_loss', save_best_only=True, verbose=0),
+
+class EarlyStopping(keras.callbacks.Callback):
+    def __init__(self, monitor='val_loss', value=0.00001, verbose=0):
+        super(keras.callbacks.Callback, self).__init__()
+        self.monitor = monitor
+        self.value = value
+        self.verbose = verbose
+
+    def on_epoch_end(self, epoch, logs={}):
+        current = logs.get(self.monitor)
+        if current is None:
+            warnings.warn("Early stopping requires %s available!" % self.monitor, RuntimeWarning)
+
+        if current < self.value:
+            if self.verbose > 0:
+                print("Epoch %05d: early stopping THR" % epoch)
+            self.model.stop_training = True"""
+
 class TrainHistory(keras.callbacks.Callback):
-    def __init__(self, args):
+    def __init__(self, args, model_dir):
+        super(keras.callbacks.Callback, self).__init__()
         self.sampling_window = 16
         self.sampling_count = self.sampling_window
-        self.max_len = 1024
+        self.losses = list()
+        self.acc = list()
         self.epoch = 1
-        self.epochs = []
-        self.losses = []
-        self.acc = []
 
         mptype = args.model_prototype
-        model_dir = os.path.normpath(args.model_dir)
         self.graph_path = os.path.join(model_dir, mptype + '-history.png')
 
     def update_graph(self):
         try:
-            '''if len(self.epochs) >= self.max_len:
-                self.epochs = list(np.array(self.epochs)[::2])[:int(self.max_len/2)]
-                self.losses = list(scipy.signal.resample(self.losses, int(self.max_len/2)))
-                self.acc = list(scipy.signal.resample(self.acc, int(self.max_len/2)))'''
-
-            epochs = np.array(self.epochs)
             losses = np.array(self.losses)
             acc = np.array(self.acc)
 
-            fig, ax = matplotlib.pyplot.subplots()
-            x_axis = range(len(losses))
-            ax.plot(x_axis, losses, 'r:', label='Loss', linewidth=1.0)
-            ax.plot(x_axis, acc, 'g', label='Accuracy', linewidth=1.0)
-
-            #legend = ax.legend(loc='upper right', shadow=False, fontsize='x-medium')
-            #legend.get_frame().set_facecolor('#BBFFCC')
-            ax.set(xlabel='epochs', ylabel='',
+            fig, ax1 = matplotlib.pyplot.subplots()
+            x_axis = np.array(range(len(losses))) * self.sampling_window
+            ax1.plot(x_axis, self.losses, 'r:', linewidth=1.0)
+            ax1.set_ylabel('Loss', color='r')
+            ax1.set(xlabel='epochs',
                 title='Training history')
-            ax.grid()
+            ax1.grid()
+
+            ax2 = ax1.twinx()
+            ax2.plot(x_axis, self.acc, 'g', linewidth=1.0)
+            ax2.set_ylabel('Accuracy', color='g')
 
             fig.savefig(self.graph_path)
+        except Exception:
+            pass
+        
+        try:
+            matplotlib.pyplot.close(fig)
         except Exception:
             pass
 
@@ -82,6 +102,9 @@ class TrainHistory(keras.callbacks.Callback):
             self.acc[pt] = (self.acc[pt] * self.sampling_count + acc) / (self.sampling_count+1)
             self.sampling_count += 1
             self.update_graph()
+
+        print('epochs:', self.epoch, ', loss:', loss, ', acc:', acc)
+        self.epoch += 1
 
 def preview_input(class_ids):
     for classid in list(class_ids.keys()):
@@ -180,9 +203,9 @@ def get_model(input_shape, num_classes, model_dir, args):
 
 def train_or_load(model, input_shape, class_ids, model_dir, args):
     train_parameters = {
-        'ss' : [1024, 64, 8],
-        'mm' : [1024, 64, 8],
-        'bn' : [1024, 64, 8],
+        'ss' : [4096, 128, 16],
+        'mm' : [4096, 128, 16],
+        'bn' : [4096, 128, 16],
     }
     mptype = args.model_prototype
     iterations = train_parameters[mptype][0]
@@ -222,7 +245,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
 
             validation_data = []
             validation_labels = []
-            if args.validation:
+            if args.validation and False:
                 print()
                 print('Shuffling validation data...')
                 # Sampling random data from directory of test images
@@ -238,7 +261,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
 
                 # Load validation data
                 print('Loading validation data...')
-                validation_size = batch_size
+                validation_size = batch_size * 4
                 entry_list = entry_list[:validation_size]
                 validation_data = np.zeros((validation_size,)+input_shape)
                 labels = np.zeros((validation_size, 1))
@@ -255,7 +278,12 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
 
             # Iterations of training
             sample_offset = 0
-            history = TrainHistory(args)
+            history = TrainHistory(args, model_dir)
+            logdir = os.path.normpath(os.path.join(model_dir, 'logdir'))
+            if not os.path.exists(logdir):
+                os.makedirs(logdir)
+            tensorboard = keras.callbacks.TensorBoard(log_dir=logdir, histogram_freq=args.epoch/4,
+                write_graph=True, write_grads=True, write_images=True)
             for i in range(iterations):
                 # Load training data from filesystem
                 data = np.zeros((batch_size,)+input_shape)
@@ -284,13 +312,19 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
                 one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
 
                 # Train the model
+                callbacks = [
+                    history,
+                    tensorboard,
+                    keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=epochs/2, verbose=0),
+                    keras.callbacks.ModelCheckpoint(weights_path, monitor='val_loss', save_best_only=True, verbose=0),
+                ]
                 if len(validation_data) and len(validation_labels):
                     print('Training with validation data...')
                     model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0,
-                        callbacks=[history], validation_data=(validation_data, validation_labels))
+                        callbacks=callbacks, validation_data=(validation_data, validation_labels))
                 else:
                     print('Training...')
-                    model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0, callbacks=[history])
+                    model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0, callbacks=callbacks, validation_split=0.2)
                 #model.train_on_batch(data, one_hot_labels)
 
                 model.save_weights(weights_path)
@@ -306,7 +340,7 @@ def main():
 
     input_shape = (ARGS.dimension, ARGS.dimension, 1)
 
-    model_dir = os.path.normpath(ARGS.model_dir)
+    model_dir = os.path.normpath(os.path.join(ARGS.model_dir, ARGS.model_prototype))
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
