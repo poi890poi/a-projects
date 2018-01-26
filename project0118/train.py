@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from keras.models import Model, model_from_json
 from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Activation, BatchNormalization, Input, Embedding, concatenate
+from keras.optimizers import Adam
 import keras.callbacks
 import keras.utils
 
@@ -27,32 +28,10 @@ print('initialized')
 
 ARGS = None
 
-"""
-class ModelCheckpoint(keras.callbacks.Callback):
-    def __init__(self, monitor='val_loss', value=0.00001, verbose=0):
-          ModelCheckpoint(weights_path, monitor='val_loss', save_best_only=True, verbose=0),
-
-class EarlyStopping(keras.callbacks.Callback):
-    def __init__(self, monitor='val_loss', value=0.00001, verbose=0):
-        super(keras.callbacks.Callback, self).__init__()
-        self.monitor = monitor
-        self.value = value
-        self.verbose = verbose
-
-    def on_epoch_end(self, epoch, logs={}):
-        current = logs.get(self.monitor)
-        if current is None:
-            warnings.warn("Early stopping requires %s available!" % self.monitor, RuntimeWarning)
-
-        if current < self.value:
-            if self.verbose > 0:
-                print("Epoch %05d: early stopping THR" % epoch)
-            self.model.stop_training = True"""
-
 class TrainHistory(keras.callbacks.Callback):
     def __init__(self, args, model_dir):
         super(keras.callbacks.Callback, self).__init__()
-        self.sampling_window = 16
+        self.sampling_window = 4
         self.sampling_count = self.sampling_window
         self.losses = list()
         self.acc = list()
@@ -103,7 +82,7 @@ class TrainHistory(keras.callbacks.Callback):
             self.sampling_count += 1
             self.update_graph()
 
-        print('epochs:', self.epoch, ', loss:', loss, ', acc:', acc)
+        #print('epochs:', self.epoch, ', loss:', loss, ', acc:', acc)
         self.epoch += 1
 
 def preview_input(class_ids):
@@ -125,9 +104,9 @@ def preview_input(class_ids):
 
 def get_model(input_shape, num_classes, model_dir, args):
     model_prototypes = {
-        'ss' : [32, 64, 2, 4, 400, 400, 0],
-        'mm' : [32, 64, 2, 4, 400, 400, 2],
-        'bn' : [32, 64, 2, 4, 400, 400, 3],
+        'ss' : [20, 50, 2, 2, 500, 0, 0, 0, 0.001, 0],
+        'mm' : [32, 64, 2, 2, 400, 400, 0.5, 0.5, 0.001, 2],
+        'bn' : [24, 48, 2, 2, 400, 400, 0.5, 0.5, 0.002, 3],
     }
     FLAG_BATCHNORMALIZATION = 1
     FLAG_MULTISCALE = 2
@@ -139,7 +118,10 @@ def get_model(input_shape, num_classes, model_dir, args):
     p2 = model_prototypes[mptype][3]
     fc1 = model_prototypes[mptype][4]
     fc2 = model_prototypes[mptype][5]
-    flags = model_prototypes[mptype][6]
+    d1 = model_prototypes[mptype][6]
+    d2 = model_prototypes[mptype][7]
+    lr = model_prototypes[mptype][8]
+    flags = model_prototypes[mptype][9]
 
     model_path = os.path.join(model_dir, mptype + '.json')
     model = None
@@ -171,15 +153,19 @@ def get_model(input_shape, num_classes, model_dir, args):
         # Concatenate outputs from stage-1 and stage-2
         if (flags&FLAG_MULTISCALE): x = concatenate([x, in_s1])
 
-        # Use 2 fully-connected layers
+        # 1st fully-connected layer
         x = Dense(fc1, name='fc_1')(x)
         if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
         x = Activation('relu')(x)
-        x = Dropout(0.5)(x)
-        x = Dense(fc2, name='fc_2')(x)
-        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
-        x = Activation('relu')(x)
-        x = Dropout(0.5)(x)
+        if d1: x = Dropout(d1)(x)
+
+        # 2nd (optional) fully-connected layer
+        if fc2:
+            x = Dense(fc2, name='fc_2')(x)
+            if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+            x = Activation('relu')(x)
+            if d2: x = Dropout(d2)(x)
+
         x = Dense(num_classes)(x)
         if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
         predictions = Activation('softmax', name='softmax')(x)
@@ -194,23 +180,24 @@ def get_model(input_shape, num_classes, model_dir, args):
     graph_path = os.path.join(model_dir, mptype + '-model.png')
     keras.utils.plot_model(model, to_file=graph_path)
 
-    model.compile(optimizer='adam',
-        loss='categorical_crossentropy',
-        metrics=['accuracy'])
+    adam = Adam(lr=lr)
+    model.compile(adam, loss='categorical_crossentropy', metrics=['accuracy'])
 
     return model
 
 
 def train_or_load(model, input_shape, class_ids, model_dir, args):
     train_parameters = {
-        'ss' : [4096, 128, 16],
-        'mm' : [4096, 128, 16],
-        'bn' : [4096, 128, 16],
+        'ss' : [64, 4096, 256, 0.001, 0.0001],
+        'mm' : [1024, 128, 256, 0.001, 0.0001],
+        'bn' : [64, 1024, 256, 0.002, 0.0001],
     }
     mptype = args.model_prototype
     iterations = train_parameters[mptype][0]
     batch_size = train_parameters[mptype][1]
     epochs = train_parameters[mptype][2]
+    learn_rate = train_parameters[mptype][3]
+    lr_fine_tune = train_parameters[mptype][4]
 
     num_classes = len(class_ids)
 
@@ -220,114 +207,108 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
         model.load_weights(weights_path)
         print()
         print('Weights loaded from', weights_path)
+
+    if args.dummy:
+        # Generate random dummy data for verification of model definition
+        data = np.random.random((1000,)+input_shape)
+        labels = np.random.randint(num_classes, size=(1000, 1))
+        one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
+        model.fit(data, one_hot_labels, batch_size=32, epochs=epochs, verbose=1)
     else:
-        if args.dummy:
-            # Generate random dummy data for verification of model definition
-            data = np.random.random((1000,)+input_shape)
-            labels = np.random.randint(num_classes, size=(1000, 1))
-            one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
-            model.fit(data, one_hot_labels, batch_size=batch_size, epochs=args.epoch, verbose=1)
-        else:
-            # Get list of proto-samples and shuffle them
-            print()
-            print('Getting sample file list...')
-            now = int(time.time())
+        # Get list of proto-samples and shuffle them
+        print()
+        print('Getting sample file list...')
+        sample_count = 0
+        now = int(time.time())
+        proto_samples = list() # List of all proto-samples (in the original dataset without mutation) sorted by classes
+        for i in range(num_classes):
+            proto_samples.append(list())
+        srcdir = os.path.normpath(args.src)
+        pathlist = sorted(Path(srcdir).glob('**/*.ppm'))
+        for path in pathlist:
+            path_in_str = str(path)
+            sample_dir, sample_filename = os.path.split(path_in_str)
+            class_id = int(os.path.split(sample_dir)[1])
+            proto_samples[class_id].append(path_in_str)
+            sample_count += 1
+        for i in range(num_classes):
+            random.shuffle(proto_samples[i])
+        print('Total of', sample_count, 'samples found.')
+
+        # These variables/objects outside of iteration loop maintain their status through the whole training process
+        sample_offset = 0
+        history = TrainHistory(args, model_dir)
+        logdir = os.path.normpath(os.path.join(model_dir, 'logdir'))
+        if not os.path.exists(logdir):
+            os.makedirs(logdir)
+        tensorboard = keras.callbacks.TensorBoard(log_dir=logdir, histogram_freq=epochs/4,
+            write_graph=True, write_grads=True, write_images=True)
+
+        # Iterations of training
+        samples_per_class = int(batch_size / num_classes)
+        batch_size = int(num_classes * samples_per_class) # Enforce strict classes balancing (same amount of samples for each class)
+        sample_offset = 0
+        fine_tune = False
+        for iteration in range(iterations):
+            # Load training data from filesystem
             samples = list()
-            srcdir = os.path.normpath(args.src)
-            pathlist = sorted(Path(srcdir).glob('**/*.ppm'))
-            for path in pathlist:
-                # A image folder with .csv file (annotations)
-                path_in_str = str(path)
-                sample_dir, sample_filename = os.path.split(path_in_str)
-                class_id = os.path.split(sample_dir)[1]
-                samples.append([sample_filename, class_id, path_in_str])
-            random.shuffle(samples)
 
-            validation_data = []
-            validation_labels = []
-            if args.validation and False:
-                print()
-                print('Shuffling validation data...')
-                # Sampling random data from directory of test images
-                pathlist = Path(os.path.normpath(args.validation)).glob('**/*.ppm')
-                entry_list = list()
-                for path in pathlist:
-                    imgpath = str(path)
-                    head, tail = os.path.split(imgpath)
-                    head, tail = os.path.split(head)
-                    class_id = int(tail)
-                    entry_list.append([class_id, imgpath])
-                random.shuffle(entry_list)
-
-                # Load validation data
-                print('Loading validation data...')
-                validation_size = batch_size * 4
-                entry_list = entry_list[:validation_size]
-                validation_data = np.zeros((validation_size,)+input_shape)
-                labels = np.zeros((validation_size, 1))
-                data_index = 0
-                for data_entry in entry_list:
-                    class_id = data_entry[0]
-                    imgpath = data_entry[1]
-                    sample = cv2.imread(imgpath, 0)
+            if iteration > int(iterations*0.8):
+                fine_tune = True
+            print()
+            if fine_tune:
+                print('Fine-tuning iteration:', iteration, 'in', iterations)
+            else:
+                print('Initial iteration:', iteration, 'in', iterations)
+            print('Time elapsed:', int(time.time())-now, 'sec')
+            print('Loading', samples_per_class, 'samples per class with offset', sample_offset)
+            for i in range(samples_per_class):
+                batch_shuffled = list()
+                for class_id in range(num_classes):
+                    sample_pointer = (sample_offset + i) % len(proto_samples[class_id])
+                    #print(class_id, len(samples[class_id]), sample_pointer)
+                    #print(samples[class_id])
+                    sample_path = proto_samples[class_id][sample_pointer]
+                    if fine_tune:
+                        sample = get_mutations(sample_path, 1, intensity=0.75)[0]
+                    else:
+                        sample = get_mutations(sample_path, 1, intensity=1.0)[0]
                     sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
-                    validation_data[data_index] = sample
-                    labels[data_index] = class_id
-                    data_index += 1
-                validation_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
+                    batch_shuffled.append([class_id, sample]) # Pair class_id and sample data so it's easily shuffled
+                random.shuffle(batch_shuffled) # Shuffle in small chunk with balanced data (one sample for each class)
+                samples += batch_shuffled
 
-            # Iterations of training
-            sample_offset = 0
-            history = TrainHistory(args, model_dir)
-            logdir = os.path.normpath(os.path.join(model_dir, 'logdir'))
-            if not os.path.exists(logdir):
-                os.makedirs(logdir)
-            tensorboard = keras.callbacks.TensorBoard(log_dir=logdir, histogram_freq=args.epoch/4,
-                write_graph=True, write_grads=True, write_images=True)
-            for i in range(iterations):
-                # Load training data from filesystem
-                data = np.zeros((batch_size,)+input_shape)
-                labels = np.zeros((batch_size, 1))
-                data_index = 0
-                sample_pointer = sample_offset
+            labels = np.zeros((len(samples), 1))
+            data = np.zeros((len(samples),)+input_shape)
+            for i in range(len(samples)):
+                labels[i] = samples[i][0]
+                data[i] = samples[i][1]
+            one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
 
-                print()
-                print('Iteration:', i, 'of', iterations)
-                print('Time elapsed:', int(time.time())-now, 'sec')
-                print('Loading', batch_size, 'samples starting at', sample_pointer)
-                for i in range(batch_size):
-                    class_id = samples[sample_pointer][1]
-                    sample_path = samples[sample_pointer][2]
-                    sample = get_mutations(sample_path, 1)[0]
-                    sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
-                    data[i] = sample
-                    labels[i] = class_id
+            # Train the model
+            callbacks = [
+                history,
+                #tensorboard, # The graph is messed and inconsistent with keras
+                keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.001, patience=8, verbose=1),
+                keras.callbacks.ModelCheckpoint(weights_path, monitor='val_loss', save_best_only=True, verbose=0),
+            ]
 
-                    sample_pointer += 1
-                    if sample_pointer>=len(samples): sample_pointer = 0
+            if fine_tune:
+                print('Fine-tuning with learn rate=', lr_fine_tune)
+                model.optimizer.lr.assign(lr_fine_tune)
+            else:
+                print('Initial training with learn rate=', learn_rate)
+                model.optimizer.lr.assign(learn_rate)
+            model.fit(data, one_hot_labels,
+                batch_size=batch_size, epochs=epochs,
+                verbose=1, callbacks=callbacks,
+                validation_split=0.2, shuffle=False) # Do not use keras internal shuffling so the logic can be tweaked
+            #model.train_on_batch(data, one_hot_labels)
 
-                sample_offset = sample_pointer
-                if sample_offset>=len(samples): sample_offset = 0
-        
-                one_hot_labels = keras.utils.to_categorical(labels, num_classes=num_classes) # Convert labels to categorical one-hot encoding
+            sample_offset += samples_per_class
+            if sample_offset>=65535: sample_offset = 0
 
-                # Train the model
-                callbacks = [
-                    history,
-                    tensorboard,
-                    keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.00001, patience=epochs/2, verbose=0),
-                    keras.callbacks.ModelCheckpoint(weights_path, monitor='val_loss', save_best_only=True, verbose=0),
-                ]
-                if len(validation_data) and len(validation_labels):
-                    print('Training with validation data...')
-                    model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0,
-                        callbacks=callbacks, validation_data=(validation_data, validation_labels))
-                else:
-                    print('Training...')
-                    model.fit(data, one_hot_labels, batch_size=batch_size, epochs=epochs, verbose=0, callbacks=callbacks, validation_split=0.2)
-                #model.train_on_batch(data, one_hot_labels)
-
-                model.save_weights(weights_path)
+        model.save_weights(weights_path)
     
 def main():
     class_ids = list()
@@ -348,39 +329,8 @@ def main():
 
     train_or_load(model, input_shape, class_ids, model_dir, ARGS)
 
-    # Load testing data
-    batch_size = 500
-    data = np.zeros((batch_size,)+input_shape)
-    data_index = 0
-    total_count = 0
-    pathlist = Path(os.path.normpath(ARGS.test_dir)).glob('**/*.ppm')
-    file_list = list()
-    class_list = list()
-    errors = 0
-    for path in pathlist:
-        imgpath = str(path)
-        head, tail = os.path.split(imgpath)
-        head, tail = os.path.split(head)
-        class_id = int(tail)
-        file_list.append(imgpath)
-        class_list.append(class_id)
-        sample = cv2.imread(imgpath, 0)
-        sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
-        data[data_index] = sample
-        data_index += 1
-        total_count += 1
-        if data_index==500:
-            predictions = model.predict(data)
-            predictions = np.argmax(predictions, axis=1)
-            predictions = np.column_stack((np.array(file_list), np.array(predictions), np.array(class_list)))
-            for file_path, prediction, class_id in predictions:
-                if prediction!=class_id:
-                    errors += 1
-                    print(file_path, prediction, class_id)
-                    print('Error rate:', errors/total_count)
-            file_list = list()
-            class_list = list()
-            data_index = 0
+    print()
+    print('done')
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
