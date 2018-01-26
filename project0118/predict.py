@@ -86,7 +86,9 @@ def main():
     load_weights(model, model_dir, ARGS)
 
     # Load testing data
-    batch_size = 4096
+    print()
+    print('Loading test data...')
+    batch_size = 512
     data = np.zeros((batch_size,)+input_shape)
     file_list = list()
     class_list = list()
@@ -111,21 +113,20 @@ def main():
             for file_path, prediction, class_id in predictions:
                 if prediction!=class_id:
                     errors += 1
-                    print(file_path, prediction, class_id)
-                    print('Error rate:', errors/total_count)
+                    # To-do: Save incorrectly classfied sample...
             file_list = list()
             class_list = list()
             data_index = 0
+            print('Error rate:', errors/total_count)
 
     if data_index:
         predictions = predict(model, data[:data_index], file_list[:data_index], class_list[:data_index])
         for file_path, prediction, class_id in predictions:
             if prediction!=class_id:
                 errors += 1
-                print(file_path, prediction, class_id)
-                print('Error rate:', errors/total_count)
-        file_list = list()
-        class_list = list()
+                # To-do: Save incorrectly classfied sample...
+
+    print('Error rate:', errors/total_count)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
