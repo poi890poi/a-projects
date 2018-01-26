@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import random
 import time
+import pickle
 
 import cv2
 import numpy as np
@@ -60,11 +61,22 @@ def load_weights(model, model_dir, args):
     else:
         raise(Exception, 'Weights not found')
 
-def predict(model, data, file_list, class_list):
+def predict(model, data, file_list, class_list, output_dir, file_annotations):
     predictions = model.predict(data)
     predictions = np.argmax(predictions, axis=1)
     predictions = np.column_stack((np.array(file_list), np.array(predictions), np.array(class_list)))
-    return predictions
+
+    errors = 0
+    for file_path, prediction, class_id in predictions:
+        if prediction!=class_id:
+            img = cv2.imread(file_path, 1)
+            outpath = os.path.join(output_dir, str(uuid4())+'.jpg')
+            cv2.imwrite(outpath, img)
+            filename = os.path.split(outpath)[1]
+            pickle.dump([filename, int(prediction), int(class_id)], file_annotations, protocol=pickle.HIGHEST_PROTOCOL)
+            errors += 1
+
+    return errors
     
 def main():
     class_ids = list()
@@ -81,6 +93,12 @@ def main():
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
+    outdir = os.path.normpath(os.path.join(ARGS.output_dir, ARGS.model_prototype))
+    create_empty_directory(outdir)
+    annotations_path = os.path.join(outdir, 'annotations.pkl')
+    print(annotations_path)
+    file_annotations = open(annotations_path, 'wb')
+    
     model = get_model(model_dir, ARGS)
 
     load_weights(model, model_dir, ARGS)
@@ -109,24 +127,20 @@ def main():
         data_index += 1
         total_count += 1
         if data_index==batch_size:
-            predictions = predict(model, data, file_list, class_list)
-            for file_path, prediction, class_id in predictions:
-                if prediction!=class_id:
-                    errors += 1
-                    # To-do: Save incorrectly classfied sample...
+            errors += predict(model, data, file_list, class_list, outdir, file_annotations)
             file_list = list()
             class_list = list()
             data_index = 0
             print('Error rate:', errors/total_count)
 
     if data_index:
-        predictions = predict(model, data[:data_index], file_list[:data_index], class_list[:data_index])
-        for file_path, prediction, class_id in predictions:
-            if prediction!=class_id:
-                errors += 1
-                # To-do: Save incorrectly classfied sample...
+        errors += predict(model, data[:data_index], file_list[:data_index], class_list[:data_index], outdir, file_annotations)
 
-    print('Error rate:', errors/total_count)
+    pickle.dump(['[stats]', errors, total_count], file_annotations, protocol=pickle.HIGHEST_PROTOCOL)
+    file_annotations.close()
+
+    print()
+    print('Overall accuracy:', 1 - errors/total_count)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
@@ -142,6 +156,12 @@ if __name__== "__main__":
         type=str,
         default='../../models/lenet',
         help='Path to directory of models and weights.'
+    )
+    parser.add_argument(
+        '--output_dir',
+        type=str,
+        default='../../data/GTSRB/processed/errors',
+        help='Path to directory of mis-classified images.'
     )
     parser.add_argument(
         '--model_prototype',
