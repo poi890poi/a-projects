@@ -233,10 +233,22 @@ def parse_annotations(directory, is_test, dir_dest, thumbnail_dir=''):
                         img = cv2.imread(inpath, 1)
 
                         # Save thumbnail for preview
-                        width, height, depth = img.shape
-                        if min(width, height) > min(thumbnails[classid]):
-                            cv2.imwrite(os.path.join(thumbnail_dir, str(classid)+'.jpg'), img)
-                            thumbnails[classid] = [width, height]
+                        if thumbnail_dir:
+                            width, height, depth = img.shape
+                            if classid not in thumbnails: thumbnails[classid] = [0, 0]
+                            if min(width, height) > min(thumbnails[classid]):
+                                thumbnail = img
+                                cv2.cvtColor(thumbnail, cv2.COLOR_RGB2YCrCb)
+                                channels = cv2.split(thumbnail)
+                                y = channels[0]
+                                y = cv2.equalizeHist(y)
+                                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                                channels[0] = clahe.apply(y)
+                                thumbnail = cv2.merge(channels)
+                                if not os.path.exists(thumbnail_dir):
+                                    os.makedirs(thumbnail_dir)
+                                cv2.imwrite(os.path.join(thumbnail_dir, str(classid).zfill(4)+'.jpg'), thumbnail)
+                                thumbnails[classid] = [width, height]
 
                         img = preprocess(img, annotation, ycrcb=ARGS.ycrcb, noclahe=ARGS.noclahe)
 
