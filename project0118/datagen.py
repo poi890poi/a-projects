@@ -196,10 +196,12 @@ def create_empty_directory(directory):
             if os.path.isfile(path_in_str):
                 os.unlink(path_in_str)
 
-def parse_annotations(directory, is_test, dir_dest):
+def parse_annotations(directory, is_test, dir_dest, thumbnail_dir=''):
     # Parse training data annotations
     num_processed = 0
     filename_seq = dict()
+
+    thumbnails = dict()
 
     pathlist = Path(directory).glob('**/*.csv')
     for path in pathlist:
@@ -229,6 +231,13 @@ def parse_annotations(directory, is_test, dir_dest):
                     inpath = os.path.join(dir_this, filename)
                     if os.path.exists(inpath):
                         img = cv2.imread(inpath, 1)
+
+                        # Save thumbnail for preview
+                        width, height, depth = img.shape
+                        if min(width, height) > min(thumbnails[classid]):
+                            cv2.imwrite(os.path.join(thumbnail_dir, str(classid)+'.jpg'), img)
+                            thumbnails[classid] = [width, height]
+
                         img = preprocess(img, annotation, ycrcb=ARGS.ycrcb, noclahe=ARGS.noclahe)
 
                         outpath = ''
@@ -315,7 +324,9 @@ def main():
 
     train_dir = os.path.normpath(os.path.join(data_dir, train_dir))
     test_dir = os.path.normpath(os.path.join(data_dir, test_dir))
-    parse_annotations(train_dir, is_test=False, dir_dest=os.path.normpath(os.path.join(ARGS.dest, 'train')))
+    parse_annotations(train_dir, is_test=False,
+        dir_dest=os.path.normpath(os.path.join(ARGS.dest, 'train')),
+        thumbnail_dir=os.path.normpath(os.path.join(ARGS.dest, 'thumbnail')))
     parse_annotations(test_dir, is_test=True, dir_dest=os.path.normpath(os.path.join(ARGS.dest, 'test')))
 
     print()
