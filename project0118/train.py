@@ -31,7 +31,7 @@ ARGS = None
 class TrainHistory(keras.callbacks.Callback):
     def __init__(self, args, model_dir):
         super(keras.callbacks.Callback, self).__init__()
-        self.sampling_window = 4
+        self.sampling_window = 8
         self.sampling_count = self.sampling_window
         self.losses = list()
         self.acc = list()
@@ -105,7 +105,7 @@ def preview_input(class_ids):
 def get_model(input_shape, num_classes, model_dir, args):
     model_prototypes = {
         'ss' : [20, 50, 2, 2, 500, 0, 0, 0, 0.001, 0],
-        'mm' : [32, 64, 2, 2, 400, 400, 0.5, 0.5, 0.001, 2],
+        'mm' : [32, 64, 2, 4, 400, 400, 0.5, 0.5, 0.001, 2],
         'bn' : [24, 48, 2, 2, 400, 400, 0.5, 0.5, 0.002, 3],
     }
     FLAG_BATCHNORMALIZATION = 1
@@ -189,8 +189,8 @@ def get_model(input_shape, num_classes, model_dir, args):
 def train_or_load(model, input_shape, class_ids, model_dir, args):
     train_parameters = {
         'ss' : [64, 4096, 256, 0.001, 0.0001],
-        'mm' : [1024, 128, 256, 0.001, 0.0001],
-        'bn' : [64, 1024, 256, 0.002, 0.0001],
+        'mm' : [4096, 512, 256, 0.002, 0.0001],
+        'bn' : [256, 1024, 256, 0.002, 0.0002],
     }
     mptype = args.model_prototype
     iterations = train_parameters[mptype][0]
@@ -253,7 +253,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             # Load training data from filesystem
             samples = list()
 
-            if iteration > int(iterations*0.8):
+            if iteration >= int(iterations*0.75):
                 fine_tune = True
             print()
             if fine_tune:
@@ -289,7 +289,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             callbacks = [
                 history,
                 #tensorboard, # The graph is messed and inconsistent with keras
-                keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.001, patience=8, verbose=1),
+                keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=8, verbose=1),
                 keras.callbacks.ModelCheckpoint(weights_path, monitor='val_loss', save_best_only=True, verbose=0),
             ]
 
