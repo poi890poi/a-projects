@@ -1,0 +1,9 @@
+[Unit]
+Description=Python Tornado Server
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pytor
+
+[Install]
+WantedBy=multi-user.target
