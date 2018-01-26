@@ -9,6 +9,7 @@ Dependency:
     pydot
     graphviz
     matplotlib
+    jupyter
 
 Resources:
     https://github.com/lakshayg/tensorflow-build

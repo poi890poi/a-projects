@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+    <head></head>
+    <style>
+        img.thumbnail {
+            width: 64px;
+            height: 64px;
+        }
+        img.error {
+            width: 32px;
+            height: 32px;
+        }
+        div.main_panel {
+            max-width: 800px;
+        }
+        div.model_view {
+            overflow: auto;
+            max-width: 90%;
+            max-height: 400px;
+        }
+        #div-tooltip {
+            display: none;
+            position: absolute;
+        }
+    </style>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+    <script>
+        $( document ).ready(function() {
+            $('img.error').hover( function(e) {
+                    var predict = $(this).attr('data-predict').split();
+                    var img = $($('#div-classes .thumbnail').get(parseInt(predict[0])));
+                    var src = img.attr("src");
+                    $($('#div-tooltip .thumbnail').get(0)).attr("src", src);
+                    $('#div-tooltip').css({left:e.pageX+16, top:e.pageY+16}).show();
+                }
+            );
+        });        
+    </script>
+    <body>
+        <div id="div-tooltip">
+            <img class="thumbnail" src=""></img>
+        </div>
+        <div class="main_panel">
+            <h2>Task: The German Traffic Sign Recognition Benchmark</h2>
+            2018-01-26 Lim Lee
+
+            <h3>Classes</h3>
+            <div id="div-classes">
+                {% for path in classes %}
+                    <img class="thumbnail" src="./img/thumbnail/{{ path }}"></img>
+                {% end %}
+            </div>
+
+            <h3>Model</h3>
+            <div class="model_view">
+                <img src="./img/model/{{ model_diagram }}"></img>
+            </div>
+
+            <h3>Training history</h3>
+            <img src="./img/model/{{ history_diagram }}"></img>
+
+            <h3>Results</h3>
+            <p>Overall accuracy: {{ 1 - (stats[1] / stats[2]) }}</p>
+            {% for error in errors %}
+                <img class="error" src="./img/errors/{{ error[0] }}" data-predict="{{ error[1] }},{{ error[2] }}"></img>
+            {% end %}
+
+            <h3>Method</h3>
+            <ul>
+                <li>Preprocess of images
+                    <ul>
+                        <li>Discard color (cv2.COLOR_RGB2GRAY)</li>
+                        <li>Apply histogram equalization</li>
+                        <li>Apply CLAHE, contrast limited adaptive histogram equalization</li>
+                        <li>Flip to expand dataset</li>
+                    </ul>
+                </li>
+                <li>Mutation
+                    <ul>
+                        <li>Rotation: ±15 degrees</li>
+                        <li>Perspective transformation: ±20% of dimension on all 4 corners</li>
+                    </ul>
+                </li>
+                <li>Training flow
+                    <ul>Balanced data: Feed with same amount of samples in each class</ul>
+                    <ul>Fine-tuning: </ul>
+                </li>
+            </ul>
+        </div>
+    </body>
+</html>
