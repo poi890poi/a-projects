@@ -32,7 +32,7 @@ ARGS = None
 class TrainHistory(keras.callbacks.Callback):
     def __init__(self, args, model_dir):
         super(keras.callbacks.Callback, self).__init__()
-        self.sampling_window = 8
+        self.sampling_window = 16
         self.sampling_count = self.sampling_window
         self.losses = list()
         self.acc = list()
@@ -68,12 +68,12 @@ class TrainHistory(keras.callbacks.Callback):
             pass
 
     def on_epoch_end(self, epoch, logs={}):
-        loss = logs.get('loss')
-        acc = logs.get('acc')
+        loss = logs.get('val_loss')
+        acc = logs.get('val_acc')
         if self.sampling_count>=self.sampling_window:
             # Expand history list
-            self.losses.append(logs.get('loss'))
-            self.acc.append(logs.get('acc'))
+            self.losses.append(loss)
+            self.acc.append(acc)
             self.sampling_count = 1
         else:
             # Valculate averaged data
@@ -159,7 +159,7 @@ class Hyperparameters(metaclass=Singleton):
                 'fc' : [400, 400], # Size of full-connected layer
                 'd' : [0.5, 0.5], # Dropout rate
                 'lr' : 0.002, # Initial learn_rate
-                'lr_ft' : 0.0001, # Fine-tune learn_rate
+                'lr_ft' : 0.00002, # Fine-tune learn_rate
                 'it' : 4096, # Number of iterations
                 'ft' : 2048, # Fine-tune after N iterations
                 'bs' : 512, # batch_size
