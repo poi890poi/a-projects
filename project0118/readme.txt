@@ -1,15 +1,16 @@
 Dependency:
-    opencv-contrib-python
-    wget
-    zip
-    python3-tk
-    tensorflow
-    keras
-    h5py
-    pydot
-    graphviz
-    matplotlib
-    jupyter
+    apt
+    pip
+        opencv-contrib-python
+        wget
+        zip
+        python3-tk
+        tensorflow
+        keras
+        h5py
+        pydot
+        graphviz
+        matplotlib
 
 Resources:
     https://github.com/lakshayg/tensorflow-build

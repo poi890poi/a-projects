@@ -115,7 +115,7 @@ class Hyperparameters(metaclass=Singleton):
     def __init__(self, prototype):
         self.prototype = prototype
         self.FLAG_BATCHNORMALIZATION = 1
-        parameters = {
+        self.parameters = {
             'ss' : {
                 'flags' : 0,
                 'f' : [20, 50], # Number of feature maps for conv_1 and conv_2
@@ -159,7 +159,7 @@ class Hyperparameters(metaclass=Singleton):
                 'fc' : [400, 400], # Size of full-connected layer
                 'd' : [0.5, 0.5], # Dropout rate
                 'lr' : 0.002, # Initial learn_rate
-                'lr_ft' : 0.00002, # Fine-tune learn_rate
+                'lr_ft' : 0.00001, # Fine-tune learn_rate
                 'it' : 4096, # Number of iterations
                 'ft' : 2048, # Fine-tune after N iterations
                 'bs' : 512, # batch_size
@@ -171,30 +171,30 @@ class Hyperparameters(metaclass=Singleton):
                 'met-cp' : 'val_acc', # Monitoring metric for CheckPoint
             },
         }
-        self.f1 = parameters[prototype]['f'][0]
-        self.f2 = parameters[prototype]['f'][1]
-        self.p1 = parameters[prototype]['p'][0]
-        self.p2 = parameters[prototype]['p'][1]
-        self.fc1 = parameters[prototype]['fc'][0]
-        self.fc2 = parameters[prototype]['fc'][1]
-        self.d1 = parameters[prototype]['d'][0]
-        self.d2 = parameters[prototype]['d'][1]
-        self.lr = parameters[prototype]['lr']
-        self.flags = parameters[prototype]['flags']
-        self.iterations = parameters[prototype]['it']
-        self.iterations_ft = parameters[prototype]['ft']
-        self.batch_size = parameters[prototype]['bs']
-        self.validation_size = parameters[prototype]['vs']
-        self.epochs = parameters[prototype]['ep']
-        self.learn_rate = parameters[prototype]['lr']
-        self.lr_fine_tune = parameters[prototype]['lr_ft']
-        self.min_delta = parameters[prototype]['es-md']
-        self.patience = parameters[prototype]['es-pt']
-        self.earlystop_metric = parameters[prototype]['met-es']
-        self.checkpoint_metric = parameters[prototype]['met-cp']
+        self.f1 = self.parameters[prototype]['f'][0]
+        self.f2 = self.parameters[prototype]['f'][1]
+        self.p1 = self.parameters[prototype]['p'][0]
+        self.p2 = self.parameters[prototype]['p'][1]
+        self.fc1 = self.parameters[prototype]['fc'][0]
+        self.fc2 = self.parameters[prototype]['fc'][1]
+        self.d1 = self.parameters[prototype]['d'][0]
+        self.d2 = self.parameters[prototype]['d'][1]
+        self.lr = self.parameters[prototype]['lr']
+        self.flags = self.parameters[prototype]['flags']
+        self.iterations = self.parameters[prototype]['it']
+        self.iterations_ft = self.parameters[prototype]['ft']
+        self.batch_size = self.parameters[prototype]['bs']
+        self.validation_size = self.parameters[prototype]['vs']
+        self.epochs = self.parameters[prototype]['ep']
+        self.learn_rate = self.parameters[prototype]['lr']
+        self.lr_fine_tune = self.parameters[prototype]['lr_ft']
+        self.min_delta = self.parameters[prototype]['es-md']
+        self.patience = self.parameters[prototype]['es-pt']
+        self.earlystop_metric = self.parameters[prototype]['met-es']
+        self.checkpoint_metric = self.parameters[prototype]['met-cp']
         
-    def dump(self)
-        return json.dump(parameters[self.prototype])
+    def dump(self):
+        return json.dumps(self.parameters[self.prototype])
 
     def use_batch_norm(self):
         return self.flags&self.FLAG_BATCHNORMALIZATION
@@ -269,7 +269,7 @@ def get_model(input_shape, num_classes, model_dir, args):
     graph_path = os.path.join(model_dir, 'model.png')
     keras.utils.plot_model(model, to_file=graph_path)
 
-    adam = Adam(lr=lr)
+    adam = Adam(lr=hp.learn_rate)
     model.compile(adam, loss='categorical_crossentropy', metrics=['accuracy'])
 
     return model
@@ -371,7 +371,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
                 #tensorboard, # The graph is messed and inconsistent with keras
                 keras.callbacks.ModelCheckpoint(weights_path, monitor=hp.checkpoint_metric, save_best_only=True, verbose=0),
             ]
-            if hp.min_delta&hp.patience:
+            if hp.patience:
                 callbacks.append(keras.callbacks.EarlyStopping(monitor=hp.earlystop_metric, min_delta=hp.min_delta, patience=hp.patience, verbose=1))
 
             if fine_tune:
