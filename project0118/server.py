@@ -20,8 +20,10 @@ class TrainingSummary(metaclass=Singleton):
     def __init__(self):
         self.id = str(uuid4())
         self.thumbnail_dir = os.path.normpath('../../data/GTSRB/processed/thumbnail')
-        self.errors_dir = os.path.normpath('../../data/GTSRB/processed/errors/bn')
-        self.model_dir = os.path.normpath('../../models/lenet/bn')
+
+    def load(self, model_name):
+        self.model_dir = os.path.normpath(os.path.join('../../models/lenet/', model_name))
+        self.errors_dir = os.path.normpath(os.path.join(self.model_dir, 'errors'))
 
         self.errors = list()
         with open(os.path.join(self.errors_dir, 'annotations.pkl'), 'rb') as file_pickle:
@@ -86,6 +88,22 @@ class MainHandler(tornado.web.RequestHandler):
         )
         self.write(html)
 
+class GTSRBHandler(tornado.web.RequestHandler):
+    def get(self, path):
+        components = os.path.split(path)
+        model_name = components[1]
+        TrainingSummary().load(model_name)
+        
+        loader = tornado.template.Loader("./templates")
+        html = loader.load("gtsrb.html").generate(
+            classes = TrainingSummary().get_classes(),
+            errors = TrainingSummary().get_errors(),
+            stats = TrainingSummary().get_stats(),
+            model_diagram = TrainingSummary().get_model_diagram(),
+            history_diagram = TrainingSummary().get_history_diagram(),
+        )
+        self.write(html)
+
 class ImageHandler(tornado.web.RequestHandler):
     def get(self, path):
         components = os.path.split(path)
@@ -114,7 +132,7 @@ class ImageHandler(tornado.web.RequestHandler):
 
 def make_app():
     return tornado.web.Application([
-        (r"/", MainHandler),
+        (r"/gtsrb/(.*)", GTSRBHandler),
         (r"/img/(.*)", ImageHandler),
     ])
 

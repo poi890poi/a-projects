@@ -93,7 +93,7 @@ def main():
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
-    outdir = os.path.normpath(os.path.join(ARGS.output_dir, ARGS.model_prototype))
+    outdir = os.path.normpath(os.path.join(model_dir, 'errors'))
     create_empty_directory(outdir)
     annotations_path = os.path.join(outdir, 'annotations.pkl')
     print(annotations_path)
@@ -156,12 +156,6 @@ if __name__== "__main__":
         type=str,
         default='../../models/lenet',
         help='Path to directory of models and weights.'
-    )
-    parser.add_argument(
-        '--output_dir',
-        type=str,
-        default='../../data/GTSRB/processed/errors',
-        help='Path to directory of mis-classified images.'
     )
     parser.add_argument(
         '--model_prototype',

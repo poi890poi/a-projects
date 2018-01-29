@@ -27,18 +27,28 @@
     <script>
         $( document ).ready(function() {
             $('img.error').hover( function(e) {
-                    var predict = $(this).attr('data-predict').split();
+                    var predict = $(this).attr('data-predict').split(",");
                     var img = $($('#div-classes .thumbnail').get(parseInt(predict[0])));
                     var src = img.attr("src");
-                    $($('#div-tooltip .thumbnail').get(0)).attr("src", src);
+                    $('#img-incorrect').attr("src", src);
+                    var img = $($('#div-classes .thumbnail').get(parseInt(predict[1])));
+                    var src = img.attr("src");
+                    $('#img-correct').attr("src", src);
                     $('#div-tooltip').css({left:e.pageX+16, top:e.pageY+16}).show();
                 }
             );
-        });        
+
+            $('#div-errors').mouseout( function(e) {
+                    $('#div-tooltip').hide();
+                }
+            );
+        });
     </script>
     <body>
-        <div id="div-tooltip">
-            <img class="thumbnail" src=""></img>
+        <div id="div-tooltip" style="background-color: gray; padding: 8px;">
+            predict / truth<br/>
+            <img id="img-incorrect" class="thumbnail" src=""></img>
+            <img id="img-correct" class="thumbnail" src=""></img>
         </div>
         <div class="main_panel">
             <h2>Task: The German Traffic Sign Recognition Benchmark</h2>
@@ -47,23 +57,25 @@
             <h3>Classes</h3>
             <div id="div-classes">
                 {% for path in classes %}
-                    <img class="thumbnail" src="./img/thumbnail/{{ path }}"></img>
+                    <img class="thumbnail" src="../img/thumbnail/{{ path }}"></img>
                 {% end %}
             </div>
 
-            <h3>Model</h3>
+            <h3>Model (a modified lenet)</h3>
             <div class="model_view">
-                <img src="./img/model/{{ model_diagram }}"></img>
+                <img src="../img/model/{{ model_diagram }}"></img>
             </div>
 
             <h3>Training history</h3>
-            <img src="./img/model/{{ history_diagram }}"></img>
+            <img src="../img/model/{{ history_diagram }}"></img>
 
             <h3>Results</h3>
             <p>Overall accuracy: {{ 1 - (stats[1] / stats[2]) }}</p>
+            <div id="div-errors">
             {% for error in errors %}
-                <img class="error" src="./img/errors/{{ error[0] }}" data-predict="{{ error[1] }},{{ error[2] }}"></img>
+                <img class="error" src="../img/errors/{{ error[0] }}" data-predict="{{ error[1] }},{{ error[2] }}"></img>
             {% end %}
+            </div>
 
             <h3>Method</h3>
             <ul>
@@ -83,9 +95,29 @@
                 </li>
                 <li>Training flow
                     <ul>Balanced data: Feed with same amount of samples in each class</ul>
-                    <ul>Fine-tuning: </ul>
+                    <ul>Fine-tuning: Reduce learn rate (from 0.02 to 0.0001) and sample mutation intensity (from 1.0 to 0.75) after initial training</ul>
+                    <ul>Use separate set for validation</ul>
+                    <ul>Early stop if validation loss does not improve in 16 epochs</ul>
+                    <ul>Save weights only when validation accuracy improves</ul>
                 </li>
             </ul>
+
+            <h3>References</h3>
+            <ul>
+                <li>
+                    Stanford Vision Lab (2017).
+                    <a href="http://cs231n.github.io/convolutional-networks/">CS231n Convolutional Neural Networks for Visual Recognition<a/>
+                </li>
+                <li>
+                    Pierre Sermanet and Yann LeCun (2011).
+                    <a href="http://yann.lecun.com/exdb/publis/pdf/sermanet-ijcnn-11.pdf">Traffic Sign Recognition with Multi-Scale Convolutional Networks</a>
+                </li>
+                <li>
+                    Alex Staravoitau (2017).
+                    <a href="https://navoshta.com/traffic-signs-classification/">Traffic signs classification with a convolutional network<a/>
+                </li>
+            </ul>
+
         </div>
     </body>
 </html>
