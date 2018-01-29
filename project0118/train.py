@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import random
 import time
+import json
 
 import cv2
 import numpy as np
@@ -102,26 +103,110 @@ def preview_input(class_ids):
             sample_count -= 1
             if sample_count==0: break
 
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class Hyperparameters(metaclass=Singleton):
+
+    def __init__(self, prototype):
+        self.prototype = prototype
+        self.FLAG_BATCHNORMALIZATION = 1
+        parameters = {
+            'ss' : {
+                'flags' : 0,
+                'f' : [20, 50], # Number of feature maps for conv_1 and conv_2
+                'p' : [2, 2], # Window size of pooling
+                'fc' : [500, 0], # Size of full-connected layer
+                'd' : [0, 0], # Dropout rate
+                'lr' : 0.001, # Initial learn_rate
+                'lr_ft' : 0.0001, # Fine-tune learn_rate
+                'it' : 64, # Number of iterations
+                'ft' : 48, # Fine-tune after N iterations
+                'bs' : 4096, # batch_size
+                'vs' : 0.2, # validation_split
+                'ep' : 256, # epochs
+                'es-md' : 0.0001, # min_delta for EarlyStopping
+                'es-pt' : 16, # patientce (epochs) for EarlyStopping
+                'met-es' : 'val_loss', # Monitoring metric for EarlyStopping
+                'met-cp' : 'val_loss', # Monitoring metric for CheckPoint
+            },
+            'ms' : {
+                'flags' : 1,
+                'f' : [32, 64], # Number of feature maps for conv_1 and conv_2
+                'p' : [2, 4], # Window size of pooling
+                'fc' : [400, 400], # Size of full-connected layer
+                'd' : [0.5, 0.5], # Dropout rate
+                'lr' : 0.002, # Initial learn_rate
+                'lr_ft' : 0.0001, # Fine-tune learn_rate
+                'it' : 4096, # Number of iterations
+                'ft' : 2048, # Fine-tune after N iterations
+                'bs' : 512, # batch_size
+                'vs' : 0.2, # validation_split
+                'ep' : 256, # epochs
+                'es-md' : 0.0001, # min_delta for EarlyStopping
+                'es-pt' : 8, # patientce (epochs) for EarlyStopping
+                'met-es' : 'val_loss', # Monitoring metric for EarlyStopping
+                'met-cp' : 'val_loss', # Monitoring metric for CheckPoint
+            },
+            'bn' : {
+                'flags' : 1,
+                'f' : [32, 64], # Number of feature maps for conv_1 and conv_2
+                'p' : [2, 4], # Window size of pooling
+                'fc' : [400, 400], # Size of full-connected layer
+                'd' : [0.5, 0.5], # Dropout rate
+                'lr' : 0.002, # Initial learn_rate
+                'lr_ft' : 0.0001, # Fine-tune learn_rate
+                'it' : 4096, # Number of iterations
+                'ft' : 2048, # Fine-tune after N iterations
+                'bs' : 512, # batch_size
+                'vs' : 0.2, # validation_split
+                'ep' : 256, # epochs
+                'es-md' : 0.0001, # min_delta for EarlyStopping
+                'es-pt' : 16, # patientce (epochs) for EarlyStopping
+                'met-es' : 'val_loss', # Monitoring metric for EarlyStopping
+                'met-cp' : 'val_acc', # Monitoring metric for CheckPoint
+            },
+        }
+        self.f1 = parameters[prototype]['f'][0]
+        self.f2 = parameters[prototype]['f'][1]
+        self.p1 = parameters[prototype]['p'][0]
+        self.p2 = parameters[prototype]['p'][1]
+        self.fc1 = parameters[prototype]['fc'][0]
+        self.fc2 = parameters[prototype]['fc'][1]
+        self.d1 = parameters[prototype]['d'][0]
+        self.d2 = parameters[prototype]['d'][1]
+        self.lr = parameters[prototype]['lr']
+        self.flags = parameters[prototype]['flags']
+        self.iterations = parameters[prototype]['it']
+        self.iterations_ft = parameters[prototype]['ft']
+        self.batch_size = parameters[prototype]['bs']
+        self.validation_size = parameters[prototype]['vs']
+        self.epochs = parameters[prototype]['ep']
+        self.learn_rate = parameters[prototype]['lr']
+        self.lr_fine_tune = parameters[prototype]['lr_ft']
+        self.min_delta = parameters[prototype]['es-md']
+        self.patience = parameters[prototype]['es-pt']
+        self.earlystop_metric = parameters[prototype]['met-es']
+        self.checkpoint_metric = parameters[prototype]['met-cp']
+        
+    def dump(self)
+        return json.dump(parameters[self.prototype])
+
+    def use_batch_norm(self):
+        return self.flags&self.FLAG_BATCHNORMALIZATION
+
+    def use_multi_scale(self):
+        return self.fc2
+
+    def early_stop(self):
+        return self.min_delta&self.patience
+
 def get_model(input_shape, num_classes, model_dir, args):
-    model_prototypes = {
-        'ss' : [20, 50, 2, 2, 500, 0, 0, 0, 0.001, 0],
-        'ms' : [32, 64, 2, 4, 400, 400, 0.5, 0.5, 0.001, 2],
-        'bn' : [24, 48, 2, 2, 400, 400, 0.5, 0.5, 0.002, 3],
-    }
-    FLAG_BATCHNORMALIZATION = 1
-    FLAG_MULTISCALE = 2
-    FLAG_EARLYSTOP = 4
-    mptype = args.model_prototype
-    f1 = model_prototypes[mptype][0]
-    f2 = model_prototypes[mptype][1]
-    p1 = model_prototypes[mptype][2]
-    p2 = model_prototypes[mptype][3]
-    fc1 = model_prototypes[mptype][4]
-    fc2 = model_prototypes[mptype][5]
-    d1 = model_prototypes[mptype][6]
-    d2 = model_prototypes[mptype][7]
-    lr = model_prototypes[mptype][8]
-    flags = model_prototypes[mptype][9]
+    hp = Hyperparameters(args.model_prototype)
 
     model_path = os.path.join(model_dir, 'model.json')
     model = None
@@ -135,39 +220,39 @@ def get_model(input_shape, num_classes, model_dir, args):
     else:
         # Define LeNet multi-scale model
         in_raw = Input(shape=input_shape) # Raw images as source input
-        x = Conv2D(f1, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_1')(in_raw)
+        x = Conv2D(hp.f1, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_1')(in_raw)
         x = BatchNormalization()(x)
         x = Activation('relu', name='relu_1')(x)
-        x = MaxPooling2D(pool_size=(p1, p1), name='maxpool_1')(x)
+        x = MaxPooling2D(pool_size=(hp.p1, hp.p1), name='maxpool_1')(x)
 
         # Define output of stage-1
         in_s1 = Flatten()(x)
 
         # Begin of stage-2
-        x = Conv2D(f2, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_2')(x)
-        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        x = Conv2D(hp.f2, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_2')(x)
+        if (hp.use_multi_scale()): x = BatchNormalization()(x)
         x = Activation('relu', name='relu_2')(x)
-        x = MaxPooling2D(pool_size=(p2, p2), name='maxpool_2')(x)
+        x = MaxPooling2D(pool_size=(hp.p2, hp.p2), name='maxpool_2')(x)
         x = Flatten()(x)
 
         # Concatenate outputs from stage-1 and stage-2
-        if (flags&FLAG_MULTISCALE): x = concatenate([x, in_s1])
+        if (hp.use_multi_scale()): x = concatenate([x, in_s1])
 
         # 1st fully-connected layer
-        x = Dense(fc1, name='fc_1')(x)
-        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        x = Dense(hp.fc1, name='fc_1')(x)
+        if (hp.use_multi_scale()): x = BatchNormalization()(x)
         x = Activation('relu')(x)
-        if d1: x = Dropout(d1)(x)
+        if hp.d1: x = Dropout(hp.d1)(x)
 
         # 2nd (optional) fully-connected layer
-        if fc2:
-            x = Dense(fc2, name='fc_2')(x)
-            if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        if hp.fc2:
+            x = Dense(hp.fc2, name='fc_2')(x)
+            if (hp.use_multi_scale()): x = BatchNormalization()(x)
             x = Activation('relu')(x)
-            if d2: x = Dropout(d2)(x)
+            if hp.d2: x = Dropout(hp.d2)(x)
 
         x = Dense(num_classes)(x)
-        if (flags&FLAG_BATCHNORMALIZATION): x = BatchNormalization()(x)
+        if (hp.use_multi_scale()): x = BatchNormalization()(x)
         predictions = Activation('softmax', name='softmax')(x)
 
         model = Model(inputs=in_raw, outputs=predictions)
@@ -175,6 +260,10 @@ def get_model(input_shape, num_classes, model_dir, args):
         model_json = model.to_json()
         with open(model_path, 'w') as model_file:
             model_file.write(model_json)
+
+        hp_path = os.path.join(model_dir, 'parameters.json')
+        with open(hp_path, 'w') as f:
+            f.write(Hyperparameters(args.model_prototype).dump())
 
     # Save model plot
     graph_path = os.path.join(model_dir, 'model.png')
@@ -185,21 +274,8 @@ def get_model(input_shape, num_classes, model_dir, args):
 
     return model
 
-
 def train_or_load(model, input_shape, class_ids, model_dir, args):
-    train_parameters = {
-        'ss' : [64, 4096, 256, 0.001, 0.0001, 0.0001, 16],
-        'ms' : [4096, 512, 256, 0.002, 0.0001, 0.0001, 16],
-        'bn' : [512, 2048, 256, 0.002, 0.0001, 0.0001, 16],
-    }
-    mptype = args.model_prototype
-    iterations = train_parameters[mptype][0]
-    batch_size = train_parameters[mptype][1]
-    epochs = train_parameters[mptype][2]
-    learn_rate = train_parameters[mptype][3]
-    lr_fine_tune = train_parameters[mptype][4]
-    min_delta = train_parameters[mptype][5]
-    patience = train_parameters[mptype][6]
+    hp = Hyperparameters(args.model_prototype)
 
     num_classes = len(class_ids)
 
@@ -243,25 +319,27 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
         logdir = os.path.normpath(os.path.join(model_dir, 'logdir'))
         if not os.path.exists(logdir):
             os.makedirs(logdir)
-        tensorboard = keras.callbacks.TensorBoard(log_dir=logdir, histogram_freq=epochs/4,
-            write_graph=True, write_grads=True, write_images=True)
+        
+        # The graph is inconsistent with keras
+        #tensorboard = keras.callbacks.TensorBoard(log_dir=logdir, histogram_freq=epochs/4,
+        #    write_graph=True, write_grads=True, write_images=True)
 
         # Iterations of training
-        samples_per_class = int(batch_size / num_classes)
-        batch_size = int(num_classes * samples_per_class) # Enforce strict classes balancing (same amount of samples for each class)
+        samples_per_class = int(hp.batch_size / num_classes)
+        hp.batch_size = int(num_classes * samples_per_class) # Enforce strict classes balancing (same amount of samples for each class)
         sample_offset = 0
         fine_tune = False
-        for iteration in range(iterations):
+        for iteration in range(hp.iterations):
             # Load training data from filesystem
             samples = list()
 
-            if iteration >= int(iterations/2):
+            if iteration >= int(hp.iterations_ft):
                 fine_tune = True
             print()
             if fine_tune:
-                print('Fine-tuning iteration:', iteration, 'in', iterations)
+                print('Fine-tuning iteration:', iteration, 'in', hp.iterations)
             else:
-                print('Initial iteration:', iteration, 'in', iterations)
+                print('Initial iteration:', iteration, 'in', hp.iterations)
             print('Time elapsed:', int(time.time())-now, 'sec')
             print('Loading', samples_per_class, 'samples per class with offset', sample_offset)
             for i in range(samples_per_class):
@@ -291,18 +369,19 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             callbacks = [
                 history,
                 #tensorboard, # The graph is messed and inconsistent with keras
-                keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=min_delta, patience=patience, verbose=1),
-                keras.callbacks.ModelCheckpoint(weights_path, monitor='val_acc', save_best_only=True, verbose=0),
+                keras.callbacks.ModelCheckpoint(weights_path, monitor=hp.checkpoint_metric, save_best_only=True, verbose=0),
             ]
+            if hp.min_delta&hp.patience:
+                callbacks.append(keras.callbacks.EarlyStopping(monitor=hp.earlystop_metric, min_delta=hp.min_delta, patience=hp.patience, verbose=1))
 
             if fine_tune:
-                print('Fine-tuning with learn rate=', lr_fine_tune)
-                model.optimizer.lr.assign(lr_fine_tune)
+                print('Fine-tuning with learn rate=', hp.lr_fine_tune)
+                model.optimizer.lr.assign(hp.lr_fine_tune)
             else:
-                print('Initial training with learn rate=', learn_rate)
-                model.optimizer.lr.assign(learn_rate)
+                print('Initial training with learn rate=', hp.learn_rate)
+                model.optimizer.lr.assign(hp.learn_rate)
             model.fit(data, one_hot_labels,
-                batch_size=batch_size, epochs=epochs,
+                batch_size=hp.batch_size, epochs=hp.epochs,
                 verbose=1, callbacks=callbacks,
                 validation_split=0.2, shuffle=False) # Do not use keras internal shuffling so the logic can be tweaked
             #model.train_on_batch(data, one_hot_labels)
