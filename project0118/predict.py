@@ -31,7 +31,7 @@ ARGS = None
 def get_model(model_dir, args):
     mptype = args.model_prototype
 
-    model_path = os.path.join(model_dir, mptype + '.json')
+    model_path = os.path.join(model_dir, 'model.json')
     model = None
     if os.path.exists(model_path):
         # Load model from file
@@ -52,7 +52,7 @@ def get_model(model_dir, args):
 def load_weights(model, model_dir, args):
     mptype = args.model_prototype
 
-    weights_path = os.path.join(model_dir, mptype + '.weights')
+    weights_path = os.path.join(model_dir, 'weights.keras')
     if os.path.exists(weights_path):
         # Load weights from file
         model.load_weights(weights_path)

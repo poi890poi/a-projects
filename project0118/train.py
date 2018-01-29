@@ -38,7 +38,7 @@ class TrainHistory(keras.callbacks.Callback):
         self.epoch = 1
 
         mptype = args.model_prototype
-        self.graph_path = os.path.join(model_dir, mptype + '-history.png')
+        self.graph_path = os.path.join(model_dir, 'history.png')
 
     def update_graph(self):
         try:
@@ -105,7 +105,7 @@ def preview_input(class_ids):
 def get_model(input_shape, num_classes, model_dir, args):
     model_prototypes = {
         'ss' : [20, 50, 2, 2, 500, 0, 0, 0, 0.001, 0],
-        'mm' : [32, 64, 2, 4, 400, 400, 0.5, 0.5, 0.001, 2],
+        'ms' : [32, 64, 2, 4, 400, 400, 0.5, 0.5, 0.001, 2],
         'bn' : [24, 48, 2, 2, 400, 400, 0.5, 0.5, 0.002, 3],
     }
     FLAG_BATCHNORMALIZATION = 1
@@ -123,7 +123,7 @@ def get_model(input_shape, num_classes, model_dir, args):
     lr = model_prototypes[mptype][8]
     flags = model_prototypes[mptype][9]
 
-    model_path = os.path.join(model_dir, mptype + '.json')
+    model_path = os.path.join(model_dir, 'model.json')
     model = None
     if os.path.exists(model_path) and not args.reset:
         # Load model from file
@@ -177,7 +177,7 @@ def get_model(input_shape, num_classes, model_dir, args):
             model_file.write(model_json)
 
     # Save model plot
-    graph_path = os.path.join(model_dir, mptype + '-model.png')
+    graph_path = os.path.join(model_dir, 'model.png')
     keras.utils.plot_model(model, to_file=graph_path)
 
     adam = Adam(lr=lr)
@@ -188,9 +188,9 @@ def get_model(input_shape, num_classes, model_dir, args):
 
 def train_or_load(model, input_shape, class_ids, model_dir, args):
     train_parameters = {
-        'ss' : [64, 4096, 256, 0.001, 0.0001],
-        'mm' : [4096, 512, 256, 0.002, 0.0001],
-        'bn' : [256, 1024, 256, 0.002, 0.0002],
+        'ss' : [64, 4096, 256, 0.001, 0.0001, 0.0001, 16],
+        'ms' : [4096, 512, 256, 0.002, 0.0001, 0.0001, 16],
+        'bn' : [512, 2048, 256, 0.002, 0.0001, 0.0001, 16],
     }
     mptype = args.model_prototype
     iterations = train_parameters[mptype][0]
@@ -198,10 +198,12 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
     epochs = train_parameters[mptype][2]
     learn_rate = train_parameters[mptype][3]
     lr_fine_tune = train_parameters[mptype][4]
+    min_delta = train_parameters[mptype][5]
+    patience = train_parameters[mptype][6]
 
     num_classes = len(class_ids)
 
-    weights_path = os.path.join(model_dir, mptype + '.weights')
+    weights_path = os.path.join(model_dir, 'weights.keras')
     if os.path.exists(weights_path) and not args.reset:
         # Load weights from file
         model.load_weights(weights_path)
@@ -253,7 +255,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             # Load training data from filesystem
             samples = list()
 
-            if iteration >= int(iterations*0.75):
+            if iteration >= int(iterations/2):
                 fine_tune = True
             print()
             if fine_tune:
@@ -289,8 +291,8 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             callbacks = [
                 history,
                 #tensorboard, # The graph is messed and inconsistent with keras
-                keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=8, verbose=1),
-                keras.callbacks.ModelCheckpoint(weights_path, monitor='val_loss', save_best_only=True, verbose=0),
+                keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=min_delta, patience=patience, verbose=1),
+                keras.callbacks.ModelCheckpoint(weights_path, monitor='val_acc', save_best_only=True, verbose=0),
             ]
 
             if fine_tune:

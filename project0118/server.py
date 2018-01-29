@@ -54,9 +54,9 @@ class TrainingSummary(metaclass=Singleton):
     def get_errors_dir(self):
         return self.errors_dir
     def get_model_diagram(self):
-        return 'bn-model.png'
+        return 'model.png'
     def get_history_diagram(self):
-        return 'bn-history.png'
+        return 'history.png'
     def get_id(self):
         return self.id
 
