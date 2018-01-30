@@ -119,7 +119,7 @@ class Hyperparameters(metaclass=Singleton):
             'ss' : {
                 'flags' : 0,
                 'k' : [5, 5], # Kernel size for conv_1 and conv_2
-                'f' : [20, 50], # Number of feature maps for conv_1 and conv_2
+                'f' : [20, 50, 0], # Number of feature maps for conv_1 and conv_2
                 'p' : [2, 2, 4], # Window size of pooling
                 'fc' : [500, 0], # Size of full-connected layer
                 'd' : [0, 0], # Dropout rate
@@ -157,7 +157,7 @@ class Hyperparameters(metaclass=Singleton):
             'bn' : {
                 'flags' : 1,
                 'k' : [5, 5], # Kernel size for conv_1 and conv_2
-                'f' : [32, 64], # Number of feature maps for conv_1 and conv_2
+                'f' : [32, 64, 0], # Number of feature maps for conv_1 and conv_2
                 'p' : [2, 2, 4], # Window size of pooling
                 'fc' : [400, 400], # Size of full-connected layer
                 'd' : [0.5, 0.5], # Dropout rate
@@ -173,18 +173,44 @@ class Hyperparameters(metaclass=Singleton):
                 'met-es' : 'val_loss', # Monitoring metric for EarlyStopping
                 'met-cp' : 'val_acc', # Monitoring metric for CheckPoint
             },
+            'as' : { # Alex Staravoitau https://navoshta.com/traffic-signs-classification/
+                'flags' : 1,
+                'k' : [5, 5, 5], # Kernel size for conv_1 and conv_2
+                'f' : [32, 64, 128], # Number of feature maps for conv_1 and conv_2
+                'p' : [2, 2, 4, 2, 2], # Window size of pooling
+                'fc' : [1024, 0], # Size of full-connected layer
+                'd' : [0.5, 0, 0.1, 0.2, 0.3], # Dropout rate
+                'lr' : 0.001, # Initial learn_rate
+                'lr_ft' : 0.00001, # Fine-tune learn_rate
+                'it' : 128, # Number of iterations
+                'ft' : 64, # Fine-tune after N iterations
+                'bs' : 1024, # batch_size
+                'vs' : 0.4, # validation_split
+                'ep' : 256, # epochs
+                'es-md' : 0.0001, # min_delta for EarlyStopping
+                'es-pt' : 16, # patientce (epochs) for EarlyStopping
+                'met-es' : 'val_loss', # Monitoring metric for EarlyStopping
+                'met-cp' : 'val_acc', # Monitoring metric for CheckPoint
+            },
         }
         self.k1 = self.parameters[prototype]['k'][0]
         self.k2 = self.parameters[prototype]['k'][1]
+        self.k3 = self.parameters[prototype]['k'][2]
         self.f1 = self.parameters[prototype]['f'][0]
         self.f2 = self.parameters[prototype]['f'][1]
+        self.f3 = self.parameters[prototype]['f'][2]
         self.p1 = self.parameters[prototype]['p'][0]
         self.p2 = self.parameters[prototype]['p'][1]
-        self.p3 = self.parameters[prototype]['p'][2]
+        self.pi1 = self.parameters[prototype]['p'][2]
+        self.pi2 = self.parameters[prototype]['p'][3]
+        self.p3 = self.parameters[prototype]['p'][4]
         self.fc1 = self.parameters[prototype]['fc'][0]
         self.fc2 = self.parameters[prototype]['fc'][1]
         self.d1 = self.parameters[prototype]['d'][0]
         self.d2 = self.parameters[prototype]['d'][1]
+        self.dc1 = self.parameters[prototype]['d'][2]
+        self.dc2 = self.parameters[prototype]['d'][3]
+        self.dc3 = self.parameters[prototype]['d'][4]
         self.lr = self.parameters[prototype]['lr']
         self.vs = self.parameters[prototype]['vs']
         self.flags = self.parameters[prototype]['flags']
@@ -227,29 +253,55 @@ def get_model(input_shape, num_classes, model_dir, args):
     else:
         # Define LeNet multi-scale model
         in_raw = Input(shape=input_shape) # Raw images as source input
-        x = Conv2D(hp.f1, (hp.k1, hp.k1), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_1')(in_raw)
-        x = BatchNormalization()(x)
+
+        x = Conv2D(hp.f1, (hp.k1, hp.k1), kernel_initializer='glorot_normal', input_shape=input_shape, padding='same', name='conv_1')(in_raw)
+        if (hp.use_batch_norm()): x = BatchNormalization()(x)
         x = Activation('relu', name='relu_1')(x)
+        x = MaxPooling2D(pool_size=(hp.p1, hp.p1), name='maxpool_1')(x)
+        if hp.dc1: x = Dropout(hp.dc1)(x)
 
         # Define output of stage-1
-        in_s1 = MaxPooling2D(pool_size=(hp.p3, hp.p3))(x)
-
-        x = MaxPooling2D(pool_size=(hp.p1, hp.p1), name='maxpool_1')(x)
+        if hp.pi1: in_s1 = MaxPooling2D(pool_size=(hp.pi1, hp.pi1))(x)
 
         # Begin of stage-2
-        x = Conv2D(hp.f2, (hp.k2, hp.k2), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_2')(x)
-        if (hp.use_multi_scale()): x = BatchNormalization()(x)
-        x = Activation('relu', name='relu_2')(x)
-        x = MaxPooling2D(pool_size=(hp.p2, hp.p2), name='maxpool_2')(x)
+        if hp.f2:
+            x = Conv2D(hp.f2, (hp.k2, hp.k2), kernel_initializer='glorot_normal', input_shape=input_shape, padding='same', name='conv_2')(x)
+            print('conv_2', x)
+            if (hp.use_batch_norm()): x = BatchNormalization()(x)
+            x = Activation('relu', name='relu_2')(x)
+            x = MaxPooling2D(pool_size=(hp.p2, hp.p2), name='maxpool_2')(x)
+            if hp.dc2: x = Dropout(hp.dc2)(x)
 
-        # Concatenate outputs from stage-1 and stage-2
+            # Define output of stage-1
+            if hp.pi2: in_s2 = MaxPooling2D(pool_size=(hp.pi2, hp.pi2))(x)
+
+        # Begin of stage-3
+        if hp.f3:
+            x = Conv2D(hp.f3, (hp.k3, hp.k3), kernel_initializer='glorot_normal', input_shape=input_shape, padding='same', name='conv_3')(x)
+            print('conv_3', x)
+            if (hp.use_batch_norm()): x = BatchNormalization()(x)
+            x = Activation('relu', name='relu_3')(x)
+            x = MaxPooling2D(pool_size=(hp.p3, hp.p3), name='maxpool_3')(x)
+            if hp.dc3: x = Dropout(hp.dc3)(x)
+
+        # Concatenate outputs from stage-1, stage-2, and stage-3
         x = Flatten()(x)
-        if (hp.use_multi_scale()):
+        if hp.pi1:
+            conc = [x]
+            print('in_s1', in_s1)
             in_s1 = Flatten()(in_s1)
-            x = concatenate([x, in_s1])
+            conc.append(in_s1)
+            if hp.pi2:
+                print('in_s2', in_s2)
+                in_s2 = Flatten()(in_s2)
+                conc.append(in_s2)
+            x = concatenate(conc)
+        
+        print('concatenated', x)
 
         # 1st fully-connected layer
         x = Dense(hp.fc1, name='fc_1')(x)
+        print('fc_1', x)
         if (hp.use_multi_scale()): x = BatchNormalization()(x)
         x = Activation('relu')(x)
         if hp.d1: x = Dropout(hp.d1)(x)
@@ -257,12 +309,13 @@ def get_model(input_shape, num_classes, model_dir, args):
         # 2nd (optional) fully-connected layer
         if hp.fc2:
             x = Dense(hp.fc2, name='fc_2')(x)
-            if (hp.use_multi_scale()): x = BatchNormalization()(x)
+            print('fc_2', x)
+            if (hp.use_batch_norm()): x = BatchNormalization()(x)
             x = Activation('relu')(x)
             if hp.d2: x = Dropout(hp.d2)(x)
 
+        print('softmax in', x)
         x = Dense(num_classes)(x)
-        if (hp.use_multi_scale()): x = BatchNormalization()(x)
         predictions = Activation('softmax', name='softmax')(x)
 
         model = Model(inputs=in_raw, outputs=predictions)
