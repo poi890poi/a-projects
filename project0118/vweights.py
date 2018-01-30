@@ -9,10 +9,12 @@ from pathlib import Path
 import random
 import time
 import pickle
+import sys
 
 import cv2
 import numpy as np
 import scipy.signal
+import skimage.measure
 import pydot_ng as pydot
 
 from datagen import get_mutations, create_empty_directory
@@ -22,6 +24,7 @@ from keras.models import Model, model_from_json
 from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Activation, BatchNormalization, Input, Embedding, concatenate
 import keras.callbacks
 import keras.utils
+from keras import backend as K
 
 print(keras.__version__)
 print('initialized')
@@ -121,7 +124,55 @@ def main():
         head, tail = os.path.split(head)
         class_id = int(tail)
         sample = cv2.imread(imgpath, 0)
+        cv2.imwrite('./debug/conv-step01.jpg', sample)
         sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
+
+        print(input_shape)
+        output_shape = input_shape[:2]
+        print(output_shape)
+
+        conv2 = model.get_layer('conv_2')
+        print(conv2.get_weights()[0].shape)
+        kernel = conv2.get_weights()[0][:, :, :, 0]
+        print(kernel.shape)
+
+        conv1 = model.get_layer('conv_1')
+        relu1 = model.get_layer('relu_1')
+
+        create_empty_directory('./debug')
+
+        for i in range(32):
+            k1 = conv1.get_weights()[0][:, :, :, i].reshape((5, 5))
+            sample = sample.reshape(output_shape) # Loaded image
+            #sample = np.random.random(output_shape) - 0.5 # Random pixels
+
+            convolved1 = scipy.signal.convolve2d(sample, k1, mode='same', boundary='wrap')
+            activated1 = convolved1 * (convolved1 > 0)
+            pooled1 = skimage.measure.block_reduce(activated1, (2,2), np.max)
+
+            img = np.array(cv2.normalize(convolved1.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
+            cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-1c-00.jpg', img)
+
+            img = np.array(cv2.normalize(activated1.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
+            cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-2a-00.jpg', img)
+
+            img = np.array(cv2.normalize(pooled1.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
+            cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-3p-00.jpg', img)
+
+            for j in range(0):
+                k2 = conv2.get_weights()[0][:, :, i, j].reshape((5, 5))
+
+                convolved2 = scipy.signal.convolve2d(convolved1, k2, mode='same', boundary='wrap')
+                img = np.array(cv2.normalize(convolved2.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
+                cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-1-'+str(j).zfill(2)+'.jpg', img)
+
+        sys.exit()
+
+        layer_output = conv1.output
+        model.predict([sample])
+
+        sys.exit()
+
         data[data_index] = sample
         file_list.append(imgpath)
         class_list.append(class_id)
