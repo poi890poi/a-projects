@@ -1,16 +1,18 @@
 Dependency:
-    apt
-    pip
-        opencv-contrib-python
-        wget
-        zip
-        python3-tk
-        tensorflow
-        keras
-        h5py
-        pydot
-        graphviz
-        matplotlib
+    opencv-contrib-python
+    wget
+    zip
+    python3-tk
+    tensorflow
+    keras
+    h5py
+    pydot
+    graphviz
+    matplotlib
+    scikit-image
+    
+    cntk specific
+        apt-get install openmpi-bin
 
 Resources:
     https://github.com/lakshayg/tensorflow-build
@@ -26,6 +28,11 @@ pydot and Graphviz issue:
         - Install Graphviz
         - Install pydot_ng
         - Import pydot_ng as pydot
+
+scikit-image error status 127
+    Add cl.exe (C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\bin) to PATH
+    Download wheel from...
+        https://www.lfd.uci.edu/~gohlke/pythonlibs/#scikit-image
 
 Questions:
     - How to calculate network capacity and how does it affect training and accuracy?
