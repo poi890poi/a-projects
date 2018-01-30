@@ -118,8 +118,9 @@ class Hyperparameters(metaclass=Singleton):
         self.parameters = {
             'ss' : {
                 'flags' : 0,
+                'k' : [5, 5], # Kernel size for conv_1 and conv_2
                 'f' : [20, 50], # Number of feature maps for conv_1 and conv_2
-                'p' : [2, 2], # Window size of pooling
+                'p' : [2, 2, 4], # Window size of pooling
                 'fc' : [500, 0], # Size of full-connected layer
                 'd' : [0, 0], # Dropout rate
                 'lr' : 0.001, # Initial learn_rate
@@ -136,8 +137,9 @@ class Hyperparameters(metaclass=Singleton):
             },
             'ms' : {
                 'flags' : 1,
+                'k' : [5, 5], # Kernel size for conv_1 and conv_2
                 'f' : [32, 64], # Number of feature maps for conv_1 and conv_2
-                'p' : [2, 4], # Window size of pooling
+                'p' : [2, 4, 4], # Window size of pooling
                 'fc' : [400, 400], # Size of full-connected layer
                 'd' : [0.5, 0.5], # Dropout rate
                 'lr' : 0.002, # Initial learn_rate
@@ -154,16 +156,17 @@ class Hyperparameters(metaclass=Singleton):
             },
             'bn' : {
                 'flags' : 1,
+                'k' : [5, 5], # Kernel size for conv_1 and conv_2
                 'f' : [32, 64], # Number of feature maps for conv_1 and conv_2
-                'p' : [2, 4], # Window size of pooling
+                'p' : [2, 2, 4], # Window size of pooling
                 'fc' : [400, 400], # Size of full-connected layer
                 'd' : [0.5, 0.5], # Dropout rate
-                'lr' : 0.002, # Initial learn_rate
+                'lr' : 0.001, # Initial learn_rate
                 'lr_ft' : 0.00001, # Fine-tune learn_rate
-                'it' : 4096, # Number of iterations
-                'ft' : 2048, # Fine-tune after N iterations
-                'bs' : 512, # batch_size
-                'vs' : 0.2, # validation_split
+                'it' : 512, # Number of iterations
+                'ft' : 256, # Fine-tune after N iterations
+                'bs' : 1024, # batch_size
+                'vs' : 0.4, # validation_split
                 'ep' : 256, # epochs
                 'es-md' : 0.0001, # min_delta for EarlyStopping
                 'es-pt' : 16, # patientce (epochs) for EarlyStopping
@@ -171,15 +174,19 @@ class Hyperparameters(metaclass=Singleton):
                 'met-cp' : 'val_acc', # Monitoring metric for CheckPoint
             },
         }
+        self.k1 = self.parameters[prototype]['k'][0]
+        self.k2 = self.parameters[prototype]['k'][1]
         self.f1 = self.parameters[prototype]['f'][0]
         self.f2 = self.parameters[prototype]['f'][1]
         self.p1 = self.parameters[prototype]['p'][0]
         self.p2 = self.parameters[prototype]['p'][1]
+        self.p3 = self.parameters[prototype]['p'][2]
         self.fc1 = self.parameters[prototype]['fc'][0]
         self.fc2 = self.parameters[prototype]['fc'][1]
         self.d1 = self.parameters[prototype]['d'][0]
         self.d2 = self.parameters[prototype]['d'][1]
         self.lr = self.parameters[prototype]['lr']
+        self.vs = self.parameters[prototype]['vs']
         self.flags = self.parameters[prototype]['flags']
         self.iterations = self.parameters[prototype]['it']
         self.iterations_ft = self.parameters[prototype]['ft']
@@ -220,23 +227,26 @@ def get_model(input_shape, num_classes, model_dir, args):
     else:
         # Define LeNet multi-scale model
         in_raw = Input(shape=input_shape) # Raw images as source input
-        x = Conv2D(hp.f1, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_1')(in_raw)
+        x = Conv2D(hp.f1, (hp.k1, hp.k1), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_1')(in_raw)
         x = BatchNormalization()(x)
         x = Activation('relu', name='relu_1')(x)
-        x = MaxPooling2D(pool_size=(hp.p1, hp.p1), name='maxpool_1')(x)
 
         # Define output of stage-1
-        in_s1 = Flatten()(x)
+        in_s1 = MaxPooling2D(pool_size=(hp.p3, hp.p3))(x)
+
+        x = MaxPooling2D(pool_size=(hp.p1, hp.p1), name='maxpool_1')(x)
 
         # Begin of stage-2
-        x = Conv2D(hp.f2, (5, 5), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_2')(x)
+        x = Conv2D(hp.f2, (hp.k2, hp.k2), kernel_initializer='glorot_normal', input_shape=input_shape, name='conv_2')(x)
         if (hp.use_multi_scale()): x = BatchNormalization()(x)
         x = Activation('relu', name='relu_2')(x)
         x = MaxPooling2D(pool_size=(hp.p2, hp.p2), name='maxpool_2')(x)
-        x = Flatten()(x)
 
         # Concatenate outputs from stage-1 and stage-2
-        if (hp.use_multi_scale()): x = concatenate([x, in_s1])
+        x = Flatten()(x)
+        if (hp.use_multi_scale()):
+            in_s1 = Flatten()(in_s1)
+            x = concatenate([x, in_s1])
 
         # 1st fully-connected layer
         x = Dense(hp.fc1, name='fc_1')(x)
@@ -381,15 +391,13 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
                 print('Initial training with learn rate=', hp.learn_rate)
                 model.optimizer.lr.assign(hp.learn_rate)
             model.fit(data, one_hot_labels,
-                batch_size=hp.batch_size, epochs=hp.epochs,
+                batch_size=32, epochs=hp.epochs,
                 verbose=1, callbacks=callbacks,
-                validation_split=0.2, shuffle=False) # Do not use keras internal shuffling so the logic can be tweaked
+                validation_split=hp.vs, shuffle=False) # Do not use keras internal shuffling so the logic can be controlled
             #model.train_on_batch(data, one_hot_labels)
 
             sample_offset += samples_per_class
             if sample_offset>=65535: sample_offset = 0
-
-        model.save_weights(weights_path)
     
 def main():
     class_ids = list()
@@ -443,7 +451,7 @@ if __name__== "__main__":
     parser.add_argument(
         '--model_prototype',
         type=str,
-        default='ss',
+        default='bn',
         help='The name of model prototype to use with pre-defined hyperparameters.'
     )
     parser.add_argument(
