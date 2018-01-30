@@ -124,7 +124,10 @@ def main():
         head, tail = os.path.split(head)
         class_id = int(tail)
         sample = cv2.imread(imgpath, 0)
-        cv2.imwrite('./debug/conv-step01.jpg', sample)
+
+        filters_dir = os.path.normpath(os.path.join(model_dir, 'filters'))
+        create_empty_directory(filters_dir)
+
         sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
 
         print(input_shape)
@@ -139,25 +142,23 @@ def main():
         conv1 = model.get_layer('conv_1')
         relu1 = model.get_layer('relu_1')
 
-        create_empty_directory('./debug')
-
         for i in range(32):
             k1 = conv1.get_weights()[0][:, :, :, i].reshape((5, 5))
-            sample = sample.reshape(output_shape) # Loaded image
-            #sample = np.random.random(output_shape) - 0.5 # Random pixels
+            #sample = sample.reshape(output_shape) # Loaded image
+            sample = np.random.random(output_shape) - 0.5 # Random pixels
 
             convolved1 = scipy.signal.convolve2d(sample, k1, mode='same', boundary='wrap')
             activated1 = convolved1 * (convolved1 > 0)
             pooled1 = skimage.measure.block_reduce(activated1, (2,2), np.max)
 
             img = np.array(cv2.normalize(convolved1.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
-            cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-1c-00.jpg', img)
+            cv2.imwrite(os.path.join(filters_dir, str(i).zfill(2)+'-1c-00.jpg'), img)
 
             img = np.array(cv2.normalize(activated1.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
-            cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-2a-00.jpg', img)
+            cv2.imwrite(os.path.join(filters_dir, str(i).zfill(2)+'-2a-00.jpg'), img)
 
             img = np.array(cv2.normalize(pooled1.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
-            cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-3p-00.jpg', img)
+            cv2.imwrite(os.path.join(filters_dir, str(i).zfill(2)+'-3p-00.jpg'), img)
 
             for j in range(0):
                 k2 = conv2.get_weights()[0][:, :, i, j].reshape((5, 5))
