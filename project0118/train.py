@@ -23,6 +23,7 @@ from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Activati
 from keras.optimizers import Adam
 import keras.callbacks
 import keras.utils
+from keras import backend as K
 
 print(keras.__version__)
 print('initialized')
@@ -180,15 +181,14 @@ class Hyperparameters(metaclass=Singleton):
                 'p' : [2, 2, 4, 2, 2], # Window size of pooling
                 'fc' : [1024, 0], # Size of full-connected layer
                 'd' : [0.5, 0, 0.1, 0.2, 0.3], # Dropout rate
-                'lr' : 0.001, # Initial learn_rate
-                'lr_ft' : 0.00001, # Fine-tune learn_rate
-                'it' : 128, # Number of iterations
-                'ft' : 64, # Fine-tune after N iterations
+                'it' : [32, 32, 32, 32, 32], # Number of iterations for each phase
+                'lr' : [0.0012, 0.008, 0.0001, 0.00002, 0.00001], # Learn rate for each phase
+                'mi' : [1.0, 0.9, 0.85, 0.75], # Mutation intensity for each phase
                 'bs' : 1024, # batch_size
                 'vs' : 0.4, # validation_split
                 'ep' : 256, # epochs
                 'es-md' : 0.0001, # min_delta for EarlyStopping
-                'es-pt' : 16, # patientce (epochs) for EarlyStopping
+                'es-pt' : 32, # patientce (epochs) for EarlyStopping
                 'met-es' : 'val_loss', # Monitoring metric for EarlyStopping
                 'met-cp' : 'val_acc', # Monitoring metric for CheckPoint
             },
@@ -211,16 +211,17 @@ class Hyperparameters(metaclass=Singleton):
         self.dc1 = self.parameters[prototype]['d'][2]
         self.dc2 = self.parameters[prototype]['d'][3]
         self.dc3 = self.parameters[prototype]['d'][4]
-        self.lr = self.parameters[prototype]['lr']
         self.vs = self.parameters[prototype]['vs']
         self.flags = self.parameters[prototype]['flags']
         self.iterations = self.parameters[prototype]['it']
-        self.iterations_ft = self.parameters[prototype]['ft']
+        for i in range(len(self.iterations)):
+            self.iterations[i] = int(np.sum(self.iterations[:i+1])) # numpy integer must be casted to int for Python to JSON-encode
+        self.iterations_total = self.iterations[-1]
+        self.learn_rate = self.parameters[prototype]['lr']
+        self.mintensity = self.parameters[prototype]['mi']
         self.batch_size = self.parameters[prototype]['bs']
         self.validation_size = self.parameters[prototype]['vs']
         self.epochs = self.parameters[prototype]['ep']
-        self.learn_rate = self.parameters[prototype]['lr']
-        self.lr_fine_tune = self.parameters[prototype]['lr_ft']
         self.min_delta = self.parameters[prototype]['es-md']
         self.patience = self.parameters[prototype]['es-pt']
         self.earlystop_metric = self.parameters[prototype]['met-es']
@@ -241,6 +242,7 @@ class Hyperparameters(metaclass=Singleton):
 def get_model(input_shape, num_classes, model_dir, args):
     hp = Hyperparameters(args.model_prototype)
 
+    print()
     model_path = os.path.join(model_dir, 'model.json')
     model = None
     if os.path.exists(model_path) and not args.reset:
@@ -248,7 +250,6 @@ def get_model(input_shape, num_classes, model_dir, args):
         with open(model_path, 'r') as model_file:
             model_json = model_file.read()
             model = model_from_json(model_json)
-        print()
         print('Model loaded from', model_path)
     else:
         # Define LeNet multi-scale model
@@ -332,7 +333,7 @@ def get_model(input_shape, num_classes, model_dir, args):
     graph_path = os.path.join(model_dir, 'model.png')
     keras.utils.plot_model(model, to_file=graph_path)
 
-    adam = Adam(lr=hp.learn_rate)
+    adam = Adam(lr=hp.learn_rate[0])
     model.compile(adam, loss='categorical_crossentropy', metrics=['accuracy'])
 
     return model
@@ -392,17 +393,17 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
         hp.batch_size = int(num_classes * samples_per_class) # Enforce strict classes balancing (same amount of samples for each class)
         sample_offset = 0
         fine_tune = False
-        for iteration in range(hp.iterations):
+        for iteration in range(hp.iterations_total):
             # Load training data from filesystem
             samples = list()
 
-            if iteration >= int(hp.iterations_ft):
-                fine_tune = True
+            phase = 0
+            for i in range(len(hp.iterations)-1):
+                if iteration > hp.iterations[i]:
+                    phase = i + 1
+                    break
             print()
-            if fine_tune:
-                print('Fine-tuning iteration:', iteration, 'in', hp.iterations)
-            else:
-                print('Initial iteration:', iteration, 'in', hp.iterations)
+            print('Initial iteration:', iteration, 'in', hp.iterations_total, ', phase', phase)
             print('Time elapsed:', int(time.time())-now, 'sec')
             print('Loading', samples_per_class, 'samples per class with offset', sample_offset)
             for i in range(samples_per_class):
@@ -412,10 +413,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
                     #print(class_id, len(samples[class_id]), sample_pointer)
                     #print(samples[class_id])
                     sample_path = proto_samples[class_id][sample_pointer]
-                    if fine_tune:
-                        sample = get_mutations(sample_path, 1, intensity=0.75)[0]
-                    else:
-                        sample = get_mutations(sample_path, 1, intensity=1.0)[0]
+                    sample = get_mutations(sample_path, 1, intensity=hp.mintensity[phase])[0]
                     sample = np.array(cv2.normalize(sample.astype('float'), None, 0.0, 1.0, cv2.NORM_MINMAX)).reshape(input_shape)
                     batch_shuffled.append([class_id, sample]) # Pair class_id and sample data so it's easily shuffled
                 random.shuffle(batch_shuffled) # Shuffle in small chunk with balanced data (one sample for each class)
@@ -432,19 +430,16 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             callbacks = [
                 history,
                 #tensorboard, # The graph is messed and inconsistent with keras
-                keras.callbacks.ModelCheckpoint(weights_path, monitor=hp.checkpoint_metric, save_best_only=True, verbose=0),
+                keras.callbacks.ModelCheckpoint(weights_path, monitor=hp.checkpoint_metric, save_best_only=True, verbose=1),
             ]
             if hp.patience:
                 callbacks.append(keras.callbacks.EarlyStopping(monitor=hp.earlystop_metric, min_delta=hp.min_delta, patience=hp.patience, verbose=1))
 
-            if fine_tune:
-                print('Fine-tuning with learn rate=', hp.lr_fine_tune)
-                model.optimizer.lr.assign(hp.lr_fine_tune)
-            else:
-                print('Initial training with learn rate=', hp.learn_rate)
-                model.optimizer.lr.assign(hp.learn_rate)
+            lr = hp.learn_rate[phase]
+            print('Training with learn rate=', lr)
+            K.update(model.optimizer.lr, lr)
             model.fit(data, one_hot_labels,
-                batch_size=32, epochs=hp.epochs,
+                batch_size=num_classes, epochs=hp.epochs,
                 verbose=1, callbacks=callbacks,
                 validation_split=hp.vs, shuffle=False) # Do not use keras internal shuffling so the logic can be controlled
             #model.train_on_batch(data, one_hot_labels)
