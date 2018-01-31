@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import scipy.stats
 
 from pathlib import Path
 import argparse
@@ -97,22 +98,7 @@ def flip_create(img, annotation):
 
 def preprocess(img, annotation, ycrcb=False, noclahe=False):
     width, height, depth = img.shape
-
-    # Convert to grayscale
-    if ycrcb:
-        cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
-    else:
-        cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    channels = cv2.split(img)
-    img = channels[0]
-    
-    # Apply global histogram equalize than CLAHE, Contrast Limited Adaptive Histogram Equalization
-    img = cv2.equalizeHist(img)
-    if not noclahe:
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        img = clahe.apply(img)
-
-    if annotation:    
+    if annotation:
         x1 = annotation[3]
         y1 = annotation[4]
         x2 = annotation[5]
@@ -130,7 +116,30 @@ def preprocess(img, annotation, ycrcb=False, noclahe=False):
             [0, height - 1]], dtype = "float32")
         M = cv2.getPerspectiveTransform(rect, dst)
         img = cv2.warpPerspective(img, M, (width, height))
-    
+
+    img = cv2.resize(img, (32, 32)) # Image must be resized first or CLAHE grid size cannot be determined
+    width, height, depth = img.shape
+
+    candidates = list()
+    entropy = list()
+
+    # Use the gray conversion with highest entropy
+    for conversion in [cv2.COLOR_RGB2YCrCb]:
+        buffer = img
+        cv2.cvtColor(buffer, conversion)
+        channels = cv2.split(buffer)
+        for channel in channels:
+            # Apply global histogram equalize than CLAHE, Contrast Limited Adaptive Histogram Equalization
+            channel = cv2.equalizeHist(channel)
+            if not noclahe:
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4,4))
+                channel = clahe.apply(channel)
+            hist = np.histogram(channel, bins=16)
+            candidates.append(channel)
+            entropy.append(scipy.stats.entropy(hist[0]))
+
+    # Select the candidate with highest entropy
+    img = candidates[np.argmax(entropy)]
     return img
 
 def hash_str(text):
@@ -250,13 +259,13 @@ def parse_annotations(directory, is_test, dir_dest, thumbnail_dir=''):
                                 cv2.imwrite(os.path.join(thumbnail_dir, str(classid).zfill(4)+'.jpg'), thumbnail)
                                 thumbnails[classid] = [width, height]
 
-                        img = preprocess(img, annotation, ycrcb=ARGS.ycrcb, noclahe=ARGS.noclahe)
-
                         outpath = ''
                         if is_test:
+                            img = preprocess(img, None, ycrcb=ARGS.ycrcb, noclahe=ARGS.noclahe)
                             newset = [[annotation[0], img]]
                         else:
                             # Flip or rotate to expand dataset
+                            img = preprocess(img, annotation, ycrcb=ARGS.ycrcb, noclahe=ARGS.noclahe)
                             newset = flip_create(img, annotation)
 
                         for item_class, item_img in newset:
@@ -274,7 +283,7 @@ def parse_annotations(directory, is_test, dir_dest, thumbnail_dir=''):
                                 filename_seq[item_class] += 1
 
                             outpath = os.path.normpath(os.path.join(outdir, outname))
-                            item_img = cv2.resize(item_img, (ARGS.dimension, ARGS.dimension)) # Resize to target dimension and save
+                            #item_img = cv2.resize(item_img, (ARGS.dimension, ARGS.dimension)) # Resize to target dimension and save
                             retval = cv2.imwrite(outpath, item_img)
                             if not retval:
                                 print('Error imwrite():', os.path.abspath(outpath))
