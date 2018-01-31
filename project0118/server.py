@@ -20,13 +20,14 @@ class TrainingSummary(metaclass=Singleton):
     def __init__(self):
         self.id = str(uuid4())
         self.thumbnail_dir = os.path.normpath('../../data/GTSRB/processed/thumbnail')
+        self.model_dir = os.path.normpath('../../models/lenet/')
 
     def load(self, model_name):
-        self.model_dir = os.path.normpath(os.path.join('../../models/lenet/', model_name))
-        self.errors_dir = os.path.normpath(os.path.join(self.model_dir, 'errors'))
+        current_model_dir = os.path.normpath(os.path.join('../../models/lenet/', model_name))
+        errors_dir = os.path.normpath(os.path.join(current_model_dir, 'errors'))
 
         self.errors = list()
-        with open(os.path.join(self.errors_dir, 'annotations.pkl'), 'rb') as file_pickle:
+        with open(os.path.join(errors_dir, 'annotations.pkl'), 'rb') as file_pickle:
             while True:
                 try:
                     self.errors.append(pickle.load(file_pickle))
@@ -53,8 +54,6 @@ class TrainingSummary(metaclass=Singleton):
         return self.thumbnail_dir
     def get_model_dir(self):
         return self.model_dir
-    def get_errors_dir(self):
-        return self.errors_dir
     def get_model_diagram(self):
         return 'model.png'
     def get_history_diagram(self):
@@ -96,6 +95,7 @@ class GTSRBHandler(tornado.web.RequestHandler):
         
         loader = tornado.template.Loader("./templates")
         html = loader.load("gtsrb.html").generate(
+            model_name = model_name,
             classes = TrainingSummary().get_classes(),
             errors = TrainingSummary().get_errors(),
             stats = TrainingSummary().get_stats(),
@@ -106,15 +106,18 @@ class GTSRBHandler(tornado.web.RequestHandler):
 
 class ImageHandler(tornado.web.RequestHandler):
     def get(self, path):
-        components = os.path.split(path)
-        if components[0]=='thumbnail':
-            directory = TrainingSummary().get_thumbnail_dir()
-        elif components[0]=='model':
-            directory = TrainingSummary().get_model_dir()
-        elif components[0]=='errors':
-            directory = TrainingSummary().get_errors_dir()
-
+        prefix = path[:path.find('\\')]
+        prefix = path[:path.find('/')]
+        trailing = path[path.find('\\')+1:]
+        trailing = path[path.find('/')+1:]
+        components = os.path.split(trailing)
+        directory = components[0]
         filename = components[1]
+        if prefix=='thumbnail':
+            directory = TrainingSummary().get_thumbnail_dir()
+        elif prefix=='model':
+            directory = os.path.normpath(os.path.join(TrainingSummary().get_model_dir(), directory))
+
         inpath = os.path.normpath(os.path.join(directory, filename))
         try:
             with open(inpath, 'rb') as imgf:
