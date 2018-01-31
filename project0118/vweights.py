@@ -98,9 +98,7 @@ def main():
         os.makedirs(model_dir)
 
     outdir = os.path.normpath(os.path.join(model_dir, 'errors'))
-    create_empty_directory(outdir)
     annotations_path = os.path.join(outdir, 'annotations.pkl')
-    print(annotations_path)
     file_annotations = open(annotations_path, 'wb')
     
     model = get_model(model_dir, ARGS)
@@ -167,33 +165,7 @@ def main():
                 img = np.array(cv2.normalize(convolved2.astype('float'), None, 0.0, 255.0, cv2.NORM_MINMAX))
                 cv2.imwrite('./debug/conv-'+str(i).zfill(2)+'-1-'+str(j).zfill(2)+'.jpg', img)
 
-        sys.exit()
-
-        layer_output = conv1.output
-        model.predict([sample])
-
-        sys.exit()
-
-        data[data_index] = sample
-        file_list.append(imgpath)
-        class_list.append(class_id)
-        data_index += 1
-        total_count += 1
-        if data_index==batch_size:
-            errors += predict(model, data, file_list, class_list, outdir, file_annotations)
-            file_list = list()
-            class_list = list()
-            data_index = 0
-            print('Error rate:', errors/total_count)
-
-    if data_index:
-        errors += predict(model, data[:data_index], file_list[:data_index], class_list[:data_index], outdir, file_annotations)
-
-    pickle.dump(['[stats]', errors, total_count], file_annotations, protocol=pickle.HIGHEST_PROTOCOL)
     file_annotations.close()
-
-    print()
-    print('Overall accuracy:', 1 - errors/total_count)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
