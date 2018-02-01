@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import scipy.stats
 
+import tkinter
+
 import argparse
 from pathlib import Path
 import os.path

@@ -2,6 +2,11 @@
 <html>
     <head></head>
     <style>
+        body {
+            font-family: "Helvetica";
+            line-height: 1.6;
+            font-stretch: expanded;
+        }
         img.thumbnail {
             width: 64px;
             height: 64px;
@@ -15,8 +20,11 @@
         }
         div.model_view {
             overflow: auto;
+            max-width: 95%;
+            max-height: 480px;
+        }
+        #img-model {
             max-width: 90%;
-            max-height: 400px;
         }
         #div-tooltip {
             display: none;
@@ -52,7 +60,7 @@
         </div>
         <div class="main_panel">
             <h2>Task: The German Traffic Sign Recognition Benchmark</h2>
-            2018-01-26 Lim Lee
+            2018-02-01 Lim Lee
 
             <h3>Classes</h3>
             <div id="div-classes">
@@ -63,7 +71,7 @@
 
             <h3>Model (a modified lenet)</h3>
             <div class="model_view">
-                <img src="../img/model/{{ model_name }}/{{ model_diagram }}"></img>
+                <img id="img-model" src="../img/model/{{ model_name }}/{{ model_diagram }}"></img>
             </div>
 
             <h3>Training history</h3>
@@ -94,11 +102,13 @@
                     </ul>
                 </li>
                 <li>Training flow
-                    <ul>Balanced data: Feed with same amount of samples in each class</ul>
-                    <ul>Fine-tuning: Reduce learn rate (from 0.02 to 0.0001) and sample mutation intensity (from 1.0 to 0.75) after initial training</ul>
-                    <ul>Use separate set for validation</ul>
-                    <ul>Early stop if validation loss does not improve in 16 epochs</ul>
-                    <ul>Save weights only when validation accuracy improves</ul>
+                    <ul>
+                        <li>Balanced data: Feed with same amount of samples in each class</li>
+                        <li>Fine-tuning: Reduce learn rate (from 0.02 to 0.0001) and sample mutation intensity (from 1.0 to 0.75) after initial training</li>
+                        <li>Use separate set for validation</li>
+                        <li>Early stop if validation loss does not improve in 16 epochs</li>
+                        <li>Save weights only when validation accuracy improves</li>
+                    </ul>
                 </li>
             </ul>
 
@@ -117,6 +127,25 @@
                     <a href="https://navoshta.com/traffic-signs-classification/">Traffic signs classification with a convolutional network<a/>
                 </li>
             </ul>
+
+            <h3>Updates</h3>
+            <ul>
+                <li>2018-02-01 Modified model
+                    <ul>
+                        <li>Increase to 3 convolution layers (from 2)</li>
+                        <li>Expand fully-connected layer to 1024 units (from 400)</li>
+                        <li>Remove second fully-connected layer</li>
+                    </ul>
+                </li>
+                <li>2018-01-31 Modified image preprocessing
+                    <ul>
+                        <li>Use one of the 3 channels of YCrCb with highest entropy</li>
+                        <li>YCrCb is choosen after being compared with LAB and HSV</li>
+                    </ul>
+                </li>
+            </ul>
+
+            <br/><br/><br/><br/>
 
         </div>
     </body>

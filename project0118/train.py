@@ -181,14 +181,14 @@ class Hyperparameters(metaclass=Singleton):
                 'p' : [2, 2, 4, 2, 2], # Window size of pooling
                 'fc' : [1024, 0], # Size of full-connected layer
                 'd' : [0.5, 0, 0.1, 0.2, 0.3], # Dropout rate
-                'it' : [32, 32, 32, 32, 32], # Number of iterations for each phase
+                'it' : [16, 16, 32, 32, 32], # Number of iterations for each phase
                 'lr' : [0.0012, 0.008, 0.0001, 0.00002, 0.00001], # Learn rate for each phase
                 'mi' : [1.0, 0.9, 0.85, 0.75], # Mutation intensity for each phase
                 'bs' : 1024, # batch_size
                 'vs' : 0.4, # validation_split
                 'ep' : 256, # epochs
                 'es-md' : 0.0001, # min_delta for EarlyStopping
-                'es-pt' : 32, # patientce (epochs) for EarlyStopping
+                'es-pt' : 16, # patientce (epochs) for EarlyStopping
                 'met-es' : 'val_loss', # Monitoring metric for EarlyStopping
                 'met-cp' : 'val_acc', # Monitoring metric for CheckPoint
             },

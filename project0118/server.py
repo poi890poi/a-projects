@@ -7,6 +7,7 @@ from uuid import uuid4
 import os.path
 from pathlib import Path
 import pickle
+import datetime
 
 class Singleton(type):
     _instances = {}
@@ -121,6 +122,11 @@ class ImageHandler(tornado.web.RequestHandler):
         inpath = os.path.normpath(os.path.join(directory, filename))
         try:
             with open(inpath, 'rb') as imgf:
+                modified = datetime.datetime.fromtimestamp(os.path.getmtime(inpath))
+                self.set_header("Last-Modified", modified)
+                self.set_header("Expires", datetime.datetime.utcnow() + \
+                    datetime.timedelta(days=1))
+                self.set_header("Cache-Control", "max-age=" + str(86400*1))
                 header = 'image/jpeg'
                 self.add_header('Content-Type', header) 
                 self.write(imgf.read())
