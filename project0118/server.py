@@ -123,10 +123,10 @@ class ImageHandler(tornado.web.RequestHandler):
         try:
             with open(inpath, 'rb') as imgf:
                 modified = datetime.datetime.fromtimestamp(os.path.getmtime(inpath))
-                self.set_header("Last-Modified", modified)
-                self.set_header("Expires", datetime.datetime.utcnow() + \
+                self.set_header('Last-Modified', modified)
+                self.set_header('Expires', datetime.datetime.utcnow() + \
                     datetime.timedelta(days=1))
-                self.set_header("Cache-Control", "max-age=" + str(86400*1))
+                self.set_header("Cache-Control", 'max-age=' + str(86400*1))
                 header = 'image/jpeg'
                 self.add_header('Content-Type', header) 
                 self.write(imgf.read())
@@ -137,12 +137,37 @@ class ImageHandler(tornado.web.RequestHandler):
 
         self.clear()
         self.set_status(404)
-        self.finish("Image not found")
+        self.finish('Image not found')
+
+class StaticHandler(tornado.web.RequestHandler):
+    def get(self, path):
+        path = os.path.normpath(os.path.join('./templates', path))
+        try:
+            with open(path, 'rb') as f:
+                """modified = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+                self.set_header('Last-Modified', modified)
+                self.set_header('Expires', datetime.datetime.utcnow() + \
+                    datetime.timedelta(days=1))
+                self.set_header("Cache-Control", 'max-age=' + str(86400*1))"""
+                extension = os.path.splitext(os.path.split(path)[1])[1]
+                if extension=='.js':
+                    type = 'application/javascript'
+                self.add_header('Content-Type', type)
+                self.write(f.read())
+                return
+        except Exception:
+            print('I/O Exception:', path)
+            pass
+
+        self.clear()
+        self.set_status(404)
+        self.finish('File not found')
 
 def make_app():
     return tornado.web.Application([
         (r"/gtsrb/(.*)", GTSRBHandler),
         (r"/img/(.*)", ImageHandler),
+        (r"/static/(.*)", StaticHandler),
     ])
 
 if __name__ == "__main__":

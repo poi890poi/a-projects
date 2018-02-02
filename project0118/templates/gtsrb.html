@@ -32,8 +32,12 @@
         }
     </style>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+    <script src="../static/scripts/upload.js"></script>
     <script>
         $( document ).ready(function() {
+            console.log('ready');
+            mUploadManager.something();
+
             $('img.error').hover( function(e) {
                     var predict = $(this).attr('data-predict').split(",");
                     var img = $($('#div-classes .thumbnail').get(parseInt(predict[0])));
@@ -48,6 +52,11 @@
 
             $('#div-errors').mouseout( function(e) {
                     $('#div-tooltip').hide();
+                }
+            );
+
+            $('#file_upload').change( function (e) {
+                    mUploadManager.checkUpload($(this));
                 }
             );
         });
@@ -78,7 +87,12 @@
             <img src="../img/model/{{ model_name }}/{{ history_diagram }}"></img>
 
             <h3>Results</h3>
-            <p>Overall accuracy: {{ 1 - (stats[1] / stats[2]) }}</p>
+                <form id="form_upload" action="$action" enctype="multipart/form-data" method="post">
+                    Upload files to predict...
+                    <input type="hidden" name="MAX_FILE_SIZE" value="30000" />
+                    <input type="file" id="file_upload" name="upload" multiple="multiple"><br/>
+                </form>                
+                <p>Overall accuracy: {{ 1 - (stats[1] / stats[2]) }}</p>
             <div id="div-errors">
             {% for error in errors %}
                 <img class="error" src="../img/model/{{ model_name }}/errors/{{ error[0] }}" data-predict="{{ error[1] }},{{ error[2] }}"></img>
