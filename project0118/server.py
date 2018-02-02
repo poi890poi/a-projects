@@ -8,6 +8,7 @@ import os.path
 from pathlib import Path
 import pickle
 import datetime
+import json
 
 class Singleton(type):
     _instances = {}
@@ -163,11 +164,35 @@ class StaticHandler(tornado.web.RequestHandler):
         self.set_status(404)
         self.finish('File not found')
 
+class PredictHandler(tornado.web.RequestHandler):
+    def set_default_headers(self):
+        self.set_header('Content-Type', 'application/json')
+
+    def post(self):
+        #self.get_argument('username')
+        if self.request.body:
+            try:
+                postdata = self.request.body.decode('utf-8')
+            except ValueError:
+                message = 'Unable to decode as UTF-8'
+                self.send_error(400, message=message) # Bad Request
+
+            try:
+                json_data = json.loads(postdata)
+                print(json_data)
+            except ValueError:
+                message = 'Unable to parse JSON'
+                self.send_error(400, message=message) # Bad Request
+
+        # Set up response dictionary.
+        self.response = dict()
+
 def make_app():
     return tornado.web.Application([
         (r"/gtsrb/(.*)", GTSRBHandler),
         (r"/img/(.*)", ImageHandler),
         (r"/static/(.*)", StaticHandler),
+        (r"/predict", PredictHandler),
     ])
 
 if __name__ == "__main__":

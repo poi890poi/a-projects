@@ -35,9 +35,6 @@
     <script src="../static/scripts/upload.js"></script>
     <script>
         $( document ).ready(function() {
-            console.log('ready');
-            mUploadManager.something();
-
             $('img.error').hover( function(e) {
                     var predict = $(this).attr('data-predict').split(",");
                     var img = $($('#div-classes .thumbnail').get(parseInt(predict[0])));
@@ -56,7 +53,19 @@
             );
 
             $('#file_upload').change( function (e) {
-                    mUploadManager.checkUpload($(this));
+                    mUploadManager.enqueueList({type: 'gtsrb', model: 'as', endpoint: '../predict'}, $(this), function (status, response) {
+                        if (status==mUploadManager.STATUS.Error) {
+                            if (response.code==mUploadManager.ERROR.NotAFile) {
+                                console.log('mUploadManager: Not a file');
+                            } else if (response.code==mUploadManager.ERROR.InvalidType) {
+                                console.log('mUploadManager: Unaccepted file type ' + response.fobj.type);
+                            } else {
+                                console.log('mUploadManager: Unhandled exception');
+                                console.log(response);
+                            }
+                        } else {
+                        }
+                    });
                 }
             );
         });

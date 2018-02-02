@@ -1,163 +1,143 @@
 var mUploadManager = function() {
     
     var ACCEPT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-    var qu = {};
+    var STATE = Object.freeze({'Queued': 0, 'Sent': 1, 'Finish': 2, 'Error': 3});
+    var STATUS = Object.freeze({'Error': 0, 'Success': 1});
+    var ERROR = Object.freeze({'NotAFile': 0, 'InvalidType': 1});
+    var mEnqueueDelay = 25;
+    var tEnqueue = null;
+    var qu = [];
 
-    function checkUpload(filelist) {
+    function enqueueList(service, filelist, callback) {
         console.log(filelist);
         var files = filelist.get(0).files;
         for (var i=0; i<files.length; i++ ) {
             var fobj = files[i]
-            //window.classify.enqu(fobj);
-            console.log(fobj);
-        }
-    }
-
-    function enqueue(fobj) {
-        if ( fobj instanceof File && $.inArray(fobj.type, ACCEPT_TYPES) ) {
-            var rid = window.classify.md5( '' + [service, fobj.type, fobj.name, fobj.lastModified, fobj.size].join() );
-            if ( !(rid in qu) ) {
-                upload( rid, fobj );
-                qu[rid] = {
-                    file : fobj,
-                    status : 'queued'
-                };
+            //console.log(fobj);
+            enqueueSingle(service, fobj, callback);
+            if (tEnqueue) {
+                // Do nothing
+            } else {
+                tEnqueue = setTimeout(checkUpload, mEnqueueDelay);
             }
         }
     }
 
-    function upload( rid, fobj ) {
-
-        var table = document.getElementById("table_results");
-
-        // Insert a row to display uploading item
-        var row = table.insertRow(0);
-        row.id = rid;
-        var cell1 = row.insertCell(0);
-        cell1.width = "420px";
-        var cell2 = row.insertCell(1);
-        cell1.innerHTML = '<img src="http://192.168.56.102/images/loading.gif"></img>';
-
-        // Convert actions to service / model
-        var type = '';
-        var model = '';
-        var action = $("input[name='service']:checked").val();
-        if ( action=='/classify/inceptionv3' ) {
-            type = 'CLASSIFY';
-        } else if ( action=='/classify/darknet19' ) {
-        } else if ( action=='/detection/yolo' ) {
-            type = 'DETECT';
-        } else if ( action=='/detection/tinyyolo' ) {
-        } else if ( action=='/face/detect' ) {
-            type = 'FACE';
-        } else if ( action=='/face/recognize' ) {
+    function getFileById(rid) {
+        for (var i=0; i<qu.length; i++) {
+            if (qu[i].rid==rid) {
+                return qu[i];
+            }
         }
+        return null;
+    }
 
-        console.log( ['upload', rid] );
-        var reader = new FileReader();
-        reader.onloadend = function() {
-            var base64data = reader.result;
-            base64data = base64data.split("base64,")[1];
-            console.log( ['onloadend', base64data.length]);
-            var requestObj = {
-                "requests": [
-                    {
-                        "requestId" : rid,
-                        "media" : {
-                            "content" : base64data
-                        },
-                        "services" : [
-                            {
-                                "type" : type,
-                                "model" : model,
-                                "options" : {
-                                    "resultsLimit" : 5,
-                                },
-                            }
-                        ]
-                    }
-                ]
+    function enqueueSingle(service, fobj, callback) {
+        //console.log(['enqueueSingle', fobj]);
+        //console.log(fobj instanceof File);
+        //console.log(['type', fobj.type, ACCEPT_TYPES.indexOf(fobj.type)]);
+        if ( fobj instanceof File && ACCEPT_TYPES.indexOf(fobj.type)!=-1 ) {
+            var rid = md5( '' + [fobj.type, fobj.name, fobj.lastModified, fobj.size].join() );
+            console.log([rid, getFileById(rid)]);
+            if (!getFileById(rid)) {
+                console.log('enqueue');
+                qu.push({
+                    rid: rid,
+                    file: fobj,
+                    state: STATE.Queued,
+                    callback: callback,
+                    service: service,
+                });
+                console.log(qu);
+            }
+        } else {
+            var err = {
+                code: 0,
+                fobj: fobj
             };
-            var postdata = JSON.stringify(requestObj);
-
-            // Post image url or data to service
-            $.ajax( {
-
-                url: '$action',
-                type: 'POST',
-                dataType : "json",
-                contentType : "application/json; charset=utf-8",
-                data : postdata,
-                processData : false,
-                error : function ( response ) {
-                    console.log( response );
-                },
-                success : function ( responses ) {
-                    console.log('ajax_success');
-                    var err_no = 0;
-
-                    if ( !responses.hasOwnProperty('responses') ) {
-                        console.log('Corrupted responses');
-                        console.log(responses);
-                        return;
-                    }
-
-                    console.log( responses.responses );
-
-                    for ( var i=0; i < responses.responses.length; i++ ) {
-                        var response = responses.responses[i];
-                        console.log( response );
-                        var rid = response.requestId;
-
-                        var tr = $("#"+rid);
-                        var cell1 = $( tr.find("td").get(0) );
-                        var cell2 = $( tr.find("td").get(1) );
-                        if ( response.hasOwnProperty('preview') ) {
-                            cell1.html( '<img src="' + response.preview + '"></img>' );
-                        }
-
-                        if ( response.hasOwnProperty('detectEntities') ) {
-                            console.log( response.detectEntities );
-                            var htmlstr = '';
-                            //htmlstr = htmlstr + 'returned in ' + response.result.exec_time + ' ms<br/><br/>';
-                            for ( var j=0; j < response.detectEntities.length; j++ ) {
-                                var entity = response.detectEntities[j];
-                                htmlstr = htmlstr + entity.label + ' / ' + entity.score + '<br />';
-                            }
-                            cell2.html(htmlstr);
-                        } else if ( response.hasOwnProperty('faceEntities') ) {
-                            console.log( response.faceEntities );
-                            var htmlstr = '';
-                            //htmlstr = htmlstr + 'returned in ' + response.result.exec_time + ' ms<br/><br/>';
-                            for ( var j=0; j < response.faceEntities.length; j++ ) {
-                                var entity = response.faceEntities[j];
-                                htmlstr = htmlstr + entity.label + ' / ' + entity.score + '<br />';
-                            }
-                            cell2.html(htmlstr);
-                        } else if ( response.hasOwnProperty('predictions') ) {
-                            console.log( response.predictions );
-                            var htmlstr = '';
-                            //htmlstr = htmlstr + 'returned in ' + response.result.exec_time + ' ms<br/><br/>';
-                            for ( var j=0; j < response.predictions.length; j++ ) {
-                                var prediction = response.predictions[j];
-                                htmlstr = htmlstr + prediction.class + ' / ' + prediction.score + '<br />';
-                            }
-                            cell2.html(htmlstr);
-                        }
-                    }
-                }
-            } );
+            if (fobj instanceof File) {
+                err.code = ERROR.InvalidType;
+            } else {
+                err.code = ERROR.NotAFile;
+            }
+            console.log(err);
+            callback(STATUS.Error, err);
         }
-        reader.readAsDataURL(fobj); 
-    },
-    
-    function something() {
-        console.log('something');
+    }
+
+    function checkUpload() {
+        clearTimeout(tEnqueue);
+        tEnqueue = null;
+
+        var quitem = null;
+        while (quitem==null) {
+            var quitem = qu.shift();
+            if (!quitem) {
+                quitem = null;
+                break;
+            }
+            if (quitem.state!=STATE.Queued) {
+                qu.push(quitem.slice(0));
+                quitem = null;
+            }
+        }
+
+        if (quitem) {
+            console.log(quitem);
+            var reader = new FileReader();
+            reader.onloadend = function() {
+                var base64data = reader.result;
+                base64data = base64data.split("base64,")[1];
+                console.log( ['onloadend', base64data.length]);
+                var request = {
+                    "requests": [
+                        {
+                            "requestId" : quitem.rid,
+                            "media" : {
+                                "content" : base64data
+                            },
+                            "services" : [
+                                {
+                                    "type" : quitem.service.type,
+                                    "model" : quitem.service.model,
+                                    "options" : {
+                                        "resultsLimit" : 5,
+                                    },
+                                }
+                            ]
+                        }
+                    ]
+                };
+                var postdata = JSON.stringify(request);
+                $.ajax( {
+                    url: quitem.service.endpoint,
+                    type: 'POST',
+                    dataType : "json",
+                    contentType : 'application/json; charset=utf-8',
+                    data : postdata,
+                    processData : false,
+                    error : function ( response ) {
+                        console.log( response );
+                    },
+                    success : function ( responses ) {
+                        console.log('ajax_success');
+                    }
+                } );
+            }
+            reader.readAsDataURL(quitem.file); 
+        } else {
+            console.log('File uploading queue is empty');
+        }
+    }
+
+    function md5 (s) {
+    function L(k,d){return(k<<d)|(k>>>(32-d))}function K(G,k){var I,d,F,H,x;F=(G&2147483648);H=(k&2147483648);I=(G&1073741824);d=(k&1073741824);x=(G&1073741823)+(k&1073741823);if(I&d){return(x^2147483648^F^H)}if(I|d){if(x&1073741824){return(x^3221225472^F^H)}else{return(x^1073741824^F^H)}}else{return(x^F^H)}}function r(d,F,k){return(d&F)|((~d)&k)}function q(d,F,k){return(d&k)|(F&(~k))}function p(d,F,k){return(d^F^k)}function n(d,F,k){return(F^(d|(~k)))}function u(G,F,aa,Z,k,H,I){G=K(G,K(K(r(F,aa,Z),k),I));return K(L(G,H),F)}function f(G,F,aa,Z,k,H,I){G=K(G,K(K(q(F,aa,Z),k),I));return K(L(G,H),F)}function D(G,F,aa,Z,k,H,I){G=K(G,K(K(p(F,aa,Z),k),I));return K(L(G,H),F)}function t(G,F,aa,Z,k,H,I){G=K(G,K(K(n(F,aa,Z),k),I));return K(L(G,H),F)}function e(G){var Z;var F=G.length;var x=F+8;var k=(x-(x%64))/64;var I=(k+1)*16;var aa=Array(I-1);var d=0;var H=0;while(H<F){Z=(H-(H%4))/4;d=(H%4)*8;aa[Z]=(aa[Z]| (G.charCodeAt(H)<<d));H++}Z=(H-(H%4))/4;d=(H%4)*8;aa[Z]=aa[Z]|(128<<d);aa[I-2]=F<<3;aa[I-1]=F>>>29;return aa}function B(x){var k="",F="",G,d;for(d=0;d<=3;d++){G=(x>>>(d*8))&255;F="0"+G.toString(16);k=k+F.substr(F.length-2,2)}return k}function J(k){k=k.replace(/rn/g,"n");var d="";for(var F=0;F<k.length;F++){var x=k.charCodeAt(F);if(x<128){d+=String.fromCharCode(x)}else{if((x>127)&&(x<2048)){d+=String.fromCharCode((x>>6)|192);d+=String.fromCharCode((x&63)|128)}else{d+=String.fromCharCode((x>>12)|224);d+=String.fromCharCode(((x>>6)&63)|128);d+=String.fromCharCode((x&63)|128)}}}return d}var C=Array();var P,h,E,v,g,Y,X,W,V;var S=7,Q=12,N=17,M=22;var A=5,z=9,y=14,w=20;var o=4,m=11,l=16,j=23;var U=6,T=10,R=15,O=21;s=J(s);C=e(s);Y=1732584193;X=4023233417;W=2562383102;V=271733878;for(P=0;P<C.length;P+=16){h=Y;E=X;v=W;g=V;Y=u(Y,X,W,V,C[P+0],S,3614090360);V=u(V,Y,X,W,C[P+1],Q,3905402710);W=u(W,V,Y,X,C[P+2],N,606105819);X=u(X,W,V,Y,C[P+3],M,3250441966);Y=u(Y,X,W,V,C[P+4],S,4118548399);V=u(V,Y,X,W,C[P+5],Q,1200080426);W=u(W,V,Y,X,C[P+6],N,2821735955);X=u(X,W,V,Y,C[P+7],M,4249261313);Y=u(Y,X,W,V,C[P+8],S,1770035416);V=u(V,Y,X,W,C[P+9],Q,2336552879);W=u(W,V,Y,X,C[P+10],N,4294925233);X=u(X,W,V,Y,C[P+11],M,2304563134);Y=u(Y,X,W,V,C[P+12],S,1804603682);V=u(V,Y,X,W,C[P+13],Q,4254626195);W=u(W,V,Y,X,C[P+14],N,2792965006);X=u(X,W,V,Y,C[P+15],M,1236535329);Y=f(Y,X,W,V,C[P+1],A,4129170786);V=f(V,Y,X,W,C[P+6],z,3225465664);W=f(W,V,Y,X,C[P+11],y,643717713);X=f(X,W,V,Y,C[P+0],w,3921069994);Y=f(Y,X,W,V,C[P+5],A,3593408605);V=f(V,Y,X,W,C[P+10],z,38016083);W=f(W,V,Y,X,C[P+15],y,3634488961);X=f(X,W,V,Y,C[P+4],w,3889429448);Y=f(Y,X,W,V,C[P+9],A,568446438);V=f(V,Y,X,W,C[P+14],z,3275163606);W=f(W,V,Y,X,C[P+3],y,4107603335);X=f(X,W,V,Y,C[P+8],w,1163531501);Y=f(Y,X,W,V,C[P+13],A,2850285829);V=f(V,Y,X,W,C[P+2],z,4243563512);W=f(W,V,Y,X,C[P+7],y,1735328473);X=f(X,W,V,Y,C[P+12],w,2368359562);Y=D(Y,X,W,V,C[P+5],o,4294588738);V=D(V,Y,X,W,C[P+8],m,2272392833);W=D(W,V,Y,X,C[P+11],l,1839030562);X=D(X,W,V,Y,C[P+14],j,4259657740);Y=D(Y,X,W,V,C[P+1],o,2763975236);V=D(V,Y,X,W,C[P+4],m,1272893353);W=D(W,V,Y,X,C[P+7],l,4139469664);X=D(X,W,V,Y,C[P+10],j,3200236656);Y=D(Y,X,W,V,C[P+13],o,681279174);V=D(V,Y,X,W,C[P+0],m,3936430074);W=D(W,V,Y,X,C[P+3],l,3572445317);X=D(X,W,V,Y,C[P+6],j,76029189);Y=D(Y,X,W,V,C[P+9],o,3654602809);V=D(V,Y,X,W,C[P+12],m,3873151461);W=D(W,V,Y,X,C[P+15],l,530742520);X=D(X,W,V,Y,C[P+2],j,3299628645);Y=t(Y,X,W,V,C[P+0],U,4096336452);V=t(V,Y,X,W,C[P+7],T,1126891415);W=t(W,V,Y,X,C[P+14],R,2878612391);X=t(X,W,V,Y,C[P+5],O,4237533241);Y=t(Y,X,W,V,C[P+12],U,1700485571);V=t(V,Y,X,W,C[P+3],T,2399980690);W=t(W,V,Y,X,C[P+10],R,4293915773);X=t(X,W,V,Y,C[P+1],O,2240044497);Y=t(Y,X,W,V,C[P+8],U,1873313359);V=t(V,Y,X,W,C[P+15],T,4264355552);W=t(W,V,Y,X,C[P+6],R,2734768916);X=t(X,W,V,Y,C[P+13],O,1309151649);Y=t(Y,X,W,V,C[P+4],U,4149444226);V=t(V,Y,X,W,C[P+11],T,3174756917);W=t(W,V,Y,X,C[P+2],R,718787259);X=t(X,W,V,Y,C[P+9],O,3951481745);Y=K(Y,h);X=K(X,E);W=K(W,v);V=K(V,g)}var i=B(Y)+B(X)+B(W)+B(V);return i.toLowerCase()
     }
 
     return {
-        checkUpload : checkUpload,
-        something : something
+        enqueueList: enqueueList,
+        STATUS: STATUS,
+        ERROR: ERROR,
     }
 
 }();
