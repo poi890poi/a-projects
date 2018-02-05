@@ -214,8 +214,11 @@ class Hyperparameters(metaclass=Singleton):
         self.vs = self.parameters[prototype]['vs']
         self.flags = self.parameters[prototype]['flags']
         self.iterations = self.parameters[prototype]['it']
+        iterations = list(self.iterations)
         for i in range(len(self.iterations)):
-            self.iterations[i] = int(np.sum(self.iterations[:i+1])) # numpy integer must be casted to int for Python to JSON-encode
+            iterations[i] = int(np.sum(self.iterations[:i+1])) # numpy integer must be casted to int for Python to JSON-encode
+            print(iterations[i])
+        self.iterations = list(iterations)
         self.iterations_total = self.iterations[-1]
         self.learn_rate = self.parameters[prototype]['lr']
         self.mintensity = self.parameters[prototype]['mi']
