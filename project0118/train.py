@@ -181,10 +181,10 @@ class Hyperparameters(metaclass=Singleton):
                 'p' : [2, 2, 4, 2, 2], # Window size of pooling
                 'fc' : [1024, 0], # Size of full-connected layer
                 'd' : [0.5, 0, 0.1, 0.2, 0.3], # Dropout rate
-                'it' : [32, 32, 32, 64, 128], # Number of iterations for each phase
+                'it' : [16, 16, 32, 64, 128], # Number of iterations for each phase
                 'lr' : [0.001, 0.0005, 0.0001, 0.00002, 0.00001], # Learn rate for each phase
                 'mi' : [1.0, 0.9, 0.85, 0.75], # Mutation intensity for each phase
-                'bs' : 512, # batch_size
+                'bs' : 1024, # batch_size
                 'vs' : 0.2, # validation_split
                 'ep' : 256, # epochs
                 'es-md' : 0.0001, # min_delta for EarlyStopping
@@ -403,7 +403,7 @@ def train_or_load(model, input_shape, class_ids, model_dir, args):
             phase = 0
             for i in range(len(hp.iterations)-1):
                 if iteration > hp.iterations[i]:
-                    phase = i + 1
+                    phase = i
             print()
             print('Initial iteration:', iteration, 'in', hp.iterations_total, ', phase', phase)
             print('Time elapsed:', int(time.time())-now, 'sec')
