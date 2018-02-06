@@ -1,0 +1,133 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html><head><title>Python: class HOGDescriptor</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+</head><body bgcolor="#f0f0f8">
+<p>
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="section">
+<tr bgcolor="#ffc8d8">
+<td colspan=3 valign=bottom>&nbsp;<br>
+<font color="#000000" face="helvetica, arial"><strong>cv2.HOGDescriptor</strong> = <a name="cv2.HOGDescriptor">class HOGDescriptor</a>(<a href="builtins.html#object">builtins.object</a>)</font></td></tr>
+    
+<tr><td bgcolor="#ffc8d8"><tt>&nbsp;&nbsp;&nbsp;</tt></td><td>&nbsp;</td>
+<td width="100%">Methods defined here:<br>
+<dl><dt><a name="HOGDescriptor-__init__"><strong>__init__</strong></a>(self, /, *args, **kwargs)</dt><dd><tt>Initialize&nbsp;self.&nbsp;&nbsp;See&nbsp;help(type(self))&nbsp;for&nbsp;accurate&nbsp;signature.</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-__new__"><strong>__new__</strong></a>(*args, **kwargs)<font color="#909090"><font face="helvetica, arial"> from <a href="builtins.html#type">builtins.type</a></font></font></dt><dd><tt>Create&nbsp;and&nbsp;return&nbsp;a&nbsp;new&nbsp;object.&nbsp;&nbsp;See&nbsp;help(type)&nbsp;for&nbsp;accurate&nbsp;signature.</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-__repr__"><strong>__repr__</strong></a>(self, /)</dt><dd><tt>Return&nbsp;repr(self).</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-checkDetectorSize"><strong>checkDetectorSize</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-checkDetectorSize">checkDetectorSize</a>()&nbsp;-&gt;&nbsp;retval<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Checks&nbsp;if&nbsp;detector&nbsp;size&nbsp;equal&nbsp;to&nbsp;descriptor&nbsp;size.</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-compute"><strong>compute</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-compute">compute</a>(img[,&nbsp;winStride[,&nbsp;padding[,&nbsp;locations]]])&nbsp;-&gt;&nbsp;descriptors<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Computes&nbsp;HOG&nbsp;descriptors&nbsp;of&nbsp;given&nbsp;image.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;img&nbsp;Matrix&nbsp;of&nbsp;the&nbsp;type&nbsp;CV_8U&nbsp;containing&nbsp;an&nbsp;image&nbsp;where&nbsp;HOG&nbsp;features&nbsp;will&nbsp;be&nbsp;calculated.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;descriptors&nbsp;Matrix&nbsp;of&nbsp;the&nbsp;type&nbsp;CV_32F<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;winStride&nbsp;Window&nbsp;stride.&nbsp;It&nbsp;must&nbsp;be&nbsp;a&nbsp;multiple&nbsp;of&nbsp;block&nbsp;stride.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;padding&nbsp;Padding<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;locations&nbsp;Vector&nbsp;of&nbsp;Point</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-computeGradient"><strong>computeGradient</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-computeGradient">computeGradient</a>(img[,&nbsp;grad[,&nbsp;angleOfs[,&nbsp;paddingTL[,&nbsp;paddingBR]]]])&nbsp;-&gt;&nbsp;grad,&nbsp;angleOfs<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;&nbsp;Computes&nbsp;gradients&nbsp;and&nbsp;quantized&nbsp;gradient&nbsp;orientations.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;img&nbsp;Matrix&nbsp;contains&nbsp;the&nbsp;image&nbsp;to&nbsp;be&nbsp;computed<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;grad&nbsp;Matrix&nbsp;of&nbsp;type&nbsp;CV_32FC2&nbsp;contains&nbsp;computed&nbsp;gradients<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;angleOfs&nbsp;Matrix&nbsp;of&nbsp;type&nbsp;CV_8UC2&nbsp;contains&nbsp;quantized&nbsp;gradient&nbsp;orientations<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;paddingTL&nbsp;Padding&nbsp;from&nbsp;top-left<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;paddingBR&nbsp;Padding&nbsp;from&nbsp;bottom-right</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-detect"><strong>detect</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-detect">detect</a>(img[,&nbsp;hitThreshold[,&nbsp;winStride[,&nbsp;padding[,&nbsp;searchLocations]]]])&nbsp;-&gt;&nbsp;foundLocations,&nbsp;weights<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Performs&nbsp;object&nbsp;detection&nbsp;without&nbsp;a&nbsp;multi-scale&nbsp;window.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;img&nbsp;Matrix&nbsp;of&nbsp;the&nbsp;type&nbsp;CV_8U&nbsp;or&nbsp;CV_8UC3&nbsp;containing&nbsp;an&nbsp;image&nbsp;where&nbsp;objects&nbsp;are&nbsp;detected.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;foundLocations&nbsp;Vector&nbsp;of&nbsp;point&nbsp;where&nbsp;each&nbsp;point&nbsp;contains&nbsp;left-top&nbsp;corner&nbsp;point&nbsp;of&nbsp;detected&nbsp;object&nbsp;boundaries.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;weights&nbsp;Vector&nbsp;that&nbsp;will&nbsp;contain&nbsp;confidence&nbsp;values&nbsp;for&nbsp;each&nbsp;detected&nbsp;object.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;hitThreshold&nbsp;Threshold&nbsp;for&nbsp;the&nbsp;distance&nbsp;between&nbsp;features&nbsp;and&nbsp;SVM&nbsp;classifying&nbsp;plane.<br>
+.&nbsp;&nbsp;&nbsp;Usually&nbsp;it&nbsp;is&nbsp;0&nbsp;and&nbsp;should&nbsp;be&nbsp;specfied&nbsp;in&nbsp;the&nbsp;detector&nbsp;coefficients&nbsp;(as&nbsp;the&nbsp;last&nbsp;free&nbsp;coefficient).<br>
+.&nbsp;&nbsp;&nbsp;But&nbsp;if&nbsp;the&nbsp;free&nbsp;coefficient&nbsp;is&nbsp;omitted&nbsp;(which&nbsp;is&nbsp;allowed),&nbsp;you&nbsp;can&nbsp;specify&nbsp;it&nbsp;manually&nbsp;here.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;winStride&nbsp;Window&nbsp;stride.&nbsp;It&nbsp;must&nbsp;be&nbsp;a&nbsp;multiple&nbsp;of&nbsp;block&nbsp;stride.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;padding&nbsp;Padding<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;searchLocations&nbsp;Vector&nbsp;of&nbsp;Point&nbsp;includes&nbsp;set&nbsp;of&nbsp;requrested&nbsp;locations&nbsp;to&nbsp;be&nbsp;evaluated.</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-detectMultiScale"><strong>detectMultiScale</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-detectMultiScale">detectMultiScale</a>(img[,&nbsp;hitThreshold[,&nbsp;winStride[,&nbsp;padding[,&nbsp;scale[,&nbsp;finalThreshold[,&nbsp;useMeanshiftGrouping]]]]]])&nbsp;-&gt;&nbsp;foundLocations,&nbsp;foundWeights<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Detects&nbsp;objects&nbsp;of&nbsp;different&nbsp;sizes&nbsp;in&nbsp;the&nbsp;input&nbsp;image.&nbsp;The&nbsp;detected&nbsp;objects&nbsp;are&nbsp;returned&nbsp;as&nbsp;a&nbsp;list<br>
+.&nbsp;&nbsp;&nbsp;of&nbsp;rectangles.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;img&nbsp;Matrix&nbsp;of&nbsp;the&nbsp;type&nbsp;CV_8U&nbsp;or&nbsp;CV_8UC3&nbsp;containing&nbsp;an&nbsp;image&nbsp;where&nbsp;objects&nbsp;are&nbsp;detected.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;foundLocations&nbsp;Vector&nbsp;of&nbsp;rectangles&nbsp;where&nbsp;each&nbsp;rectangle&nbsp;contains&nbsp;the&nbsp;detected&nbsp;object.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;foundWeights&nbsp;Vector&nbsp;that&nbsp;will&nbsp;contain&nbsp;confidence&nbsp;values&nbsp;for&nbsp;each&nbsp;detected&nbsp;object.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;hitThreshold&nbsp;Threshold&nbsp;for&nbsp;the&nbsp;distance&nbsp;between&nbsp;features&nbsp;and&nbsp;SVM&nbsp;classifying&nbsp;plane.<br>
+.&nbsp;&nbsp;&nbsp;Usually&nbsp;it&nbsp;is&nbsp;0&nbsp;and&nbsp;should&nbsp;be&nbsp;specfied&nbsp;in&nbsp;the&nbsp;detector&nbsp;coefficients&nbsp;(as&nbsp;the&nbsp;last&nbsp;free&nbsp;coefficient).<br>
+.&nbsp;&nbsp;&nbsp;But&nbsp;if&nbsp;the&nbsp;free&nbsp;coefficient&nbsp;is&nbsp;omitted&nbsp;(which&nbsp;is&nbsp;allowed),&nbsp;you&nbsp;can&nbsp;specify&nbsp;it&nbsp;manually&nbsp;here.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;winStride&nbsp;Window&nbsp;stride.&nbsp;It&nbsp;must&nbsp;be&nbsp;a&nbsp;multiple&nbsp;of&nbsp;block&nbsp;stride.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;padding&nbsp;Padding<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;scale&nbsp;Coefficient&nbsp;of&nbsp;the&nbsp;detection&nbsp;window&nbsp;increase.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;finalThreshold&nbsp;Final&nbsp;threshold<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;useMeanshiftGrouping&nbsp;indicates&nbsp;grouping&nbsp;algorithm</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-getDaimlerPeopleDetector"><strong>getDaimlerPeopleDetector</strong></a>(...)<font color="#909090"><font face="helvetica, arial"> from <a href="builtins.html#type">builtins.type</a></font></font></dt><dd><tt><a href="#cv2.HOGDescriptor-getDaimlerPeopleDetector">getDaimlerPeopleDetector</a>()&nbsp;-&gt;&nbsp;retval<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Returns&nbsp;coefficients&nbsp;of&nbsp;the&nbsp;classifier&nbsp;trained&nbsp;for&nbsp;people&nbsp;detection&nbsp;(for&nbsp;48x96&nbsp;windows).</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-getDefaultPeopleDetector"><strong>getDefaultPeopleDetector</strong></a>(...)<font color="#909090"><font face="helvetica, arial"> from <a href="builtins.html#type">builtins.type</a></font></font></dt><dd><tt><a href="#cv2.HOGDescriptor-getDefaultPeopleDetector">getDefaultPeopleDetector</a>()&nbsp;-&gt;&nbsp;retval<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Returns&nbsp;coefficients&nbsp;of&nbsp;the&nbsp;classifier&nbsp;trained&nbsp;for&nbsp;people&nbsp;detection&nbsp;(for&nbsp;64x128&nbsp;windows).</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-getDescriptorSize"><strong>getDescriptorSize</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-getDescriptorSize">getDescriptorSize</a>()&nbsp;-&gt;&nbsp;retval<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Returns&nbsp;the&nbsp;number&nbsp;of&nbsp;coefficients&nbsp;required&nbsp;for&nbsp;the&nbsp;classification.</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-getWinSigma"><strong>getWinSigma</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-getWinSigma">getWinSigma</a>()&nbsp;-&gt;&nbsp;retval<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Returns&nbsp;winSigma&nbsp;value</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-load"><strong>load</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-load">load</a>(filename[,&nbsp;objname])&nbsp;-&gt;&nbsp;retval<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;loads&nbsp;coefficients&nbsp;for&nbsp;the&nbsp;linear&nbsp;SVM&nbsp;classifier&nbsp;from&nbsp;a&nbsp;file<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;filename&nbsp;Name&nbsp;of&nbsp;the&nbsp;file&nbsp;to&nbsp;read.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;objname&nbsp;The&nbsp;optional&nbsp;name&nbsp;of&nbsp;the&nbsp;node&nbsp;to&nbsp;read&nbsp;(if&nbsp;empty,&nbsp;the&nbsp;first&nbsp;top-level&nbsp;node&nbsp;will&nbsp;be&nbsp;used).</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-save"><strong>save</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-save">save</a>(filename[,&nbsp;objname])&nbsp;-&gt;&nbsp;None<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;saves&nbsp;coefficients&nbsp;for&nbsp;the&nbsp;linear&nbsp;SVM&nbsp;classifier&nbsp;to&nbsp;a&nbsp;file<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;filename&nbsp;File&nbsp;name<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;objname&nbsp;Object&nbsp;name</tt></dd></dl>
+
+<dl><dt><a name="HOGDescriptor-setSVMDetector"><strong>setSVMDetector</strong></a>(...)</dt><dd><tt><a href="#cv2.HOGDescriptor-setSVMDetector">setSVMDetector</a>(_svmdetector)&nbsp;-&gt;&nbsp;None<br>
+.&nbsp;&nbsp;&nbsp;@brief&nbsp;Sets&nbsp;coefficients&nbsp;for&nbsp;the&nbsp;linear&nbsp;SVM&nbsp;classifier.<br>
+.&nbsp;&nbsp;&nbsp;@param&nbsp;_svmdetector&nbsp;coefficients&nbsp;for&nbsp;the&nbsp;linear&nbsp;SVM&nbsp;classifier.</tt></dd></dl>
+
+<hr>
+Data descriptors defined here:<br>
+<dl><dt><strong>L2HysThreshold</strong></dt>
+<dd><tt>L2HysThreshold</tt></dd>
+</dl>
+<dl><dt><strong>blockSize</strong></dt>
+<dd><tt>blockSize</tt></dd>
+</dl>
+<dl><dt><strong>blockStride</strong></dt>
+<dd><tt>blockStride</tt></dd>
+</dl>
+<dl><dt><strong>cellSize</strong></dt>
+<dd><tt>cellSize</tt></dd>
+</dl>
+<dl><dt><strong>derivAperture</strong></dt>
+<dd><tt>derivAperture</tt></dd>
+</dl>
+<dl><dt><strong>gammaCorrection</strong></dt>
+<dd><tt>gammaCorrection</tt></dd>
+</dl>
+<dl><dt><strong>histogramNormType</strong></dt>
+<dd><tt>histogramNormType</tt></dd>
+</dl>
+<dl><dt><strong>nbins</strong></dt>
+<dd><tt>nbins</tt></dd>
+</dl>
+<dl><dt><strong>nlevels</strong></dt>
+<dd><tt>nlevels</tt></dd>
+</dl>
+<dl><dt><strong>signedGradient</strong></dt>
+<dd><tt>signedGradient</tt></dd>
+</dl>
+<dl><dt><strong>svmDetector</strong></dt>
+<dd><tt>svmDetector</tt></dd>
+</dl>
+<dl><dt><strong>winSigma</strong></dt>
+<dd><tt>winSigma</tt></dd>
+</dl>
+<dl><dt><strong>winSize</strong></dt>
+<dd><tt>winSize</tt></dd>
+</dl>
+</td></tr></table>
+</body></html>
