@@ -2,7 +2,7 @@
 <opencv_storage>
 <hog type_id="opencv-object-detector-hog">
   <winSize>
-    64 64</winSize>
+    128 128</winSize>
   <blockSize>
     16 16</blockSize>
   <blockStride>
@@ -14,7 +14,7 @@
   <winSigma>4.</winSigma>
   <histogramNormType>0</histogramNormType>
   <L2HysThreshold>2.0000000000000001e-01</L2HysThreshold>
-  <gammaCorrection>0</gammaCorrection>
+  <gammaCorrection>1</gammaCorrection>
   <nlevels>64</nlevels>
   <signedGradient>0</signedGradient></hog>
 </opencv_storage>

@@ -120,7 +120,7 @@ class Dataset(Thread):
         sources = [
             ['lfw', 'http://vis-www.cs.umass.edu/lfw/lfw.tgz', ''],
             ['vggface', 'http://www.robots.ox.ac.uk/~vgg/data/vgg_face/vgg_face_dataset.tar.gz', ''],
-            #['imdb-face', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/imdb_crop.tar', ''],
+            ['imdb-crop', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/imdb_crop.tar', ''],
             #['imdb-meta', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/imdb_meta.tar', ''],
             ['wiki-face', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/wiki.tar.gz', ''],
         ]
