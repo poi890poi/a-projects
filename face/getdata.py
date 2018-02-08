@@ -123,6 +123,13 @@ class Dataset(Thread):
             ['imdb-crop', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/imdb_crop.tar', ''],
             #['imdb-meta', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/imdb_meta.tar', ''],
             ['wiki-face', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/wiki.tar.gz', ''],
+            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_1.zip', ''],
+            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_2.zip', ''],
+            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_3.zip', ''],
+            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_4.zip', ''],
+            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_5.zip', ''],
+            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/annotation.zip', ''],
+            ['lfw-deepfunneled', 'http://vis-www.cs.umass.edu/lfw/lfw-deepfunneled.tgz', ''],
         ]
         return sources
 
