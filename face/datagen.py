@@ -39,7 +39,7 @@ def next_file(refite):
         return load_image(f, 'wnd')
 
 
-class FaceTrainer():
+class DataGenerator():
     def __init__(self, hog_parameters, args, silent=False):
         self.silent = silent
 
@@ -486,6 +486,12 @@ if __name__== "__main__":
         type=str,
         default='../../data/face/wiki-face/extracted/wiki/wiki.mat',
         help='Path to annotations.'
+    )
+    parser.add_argument(
+        '--train_dir',
+        type=str,
+        default='../../data/face/train/',
+        help='Path to training data.'
     )
     ARGS, unknown = parser.parse_known_args()
     if unknown:
