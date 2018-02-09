@@ -2,7 +2,7 @@
 <opencv_storage>
 <hog type_id="opencv-object-detector-hog">
   <winSize>
-    128 128</winSize>
+    64 96</winSize>
   <blockSize>
     16 16</blockSize>
   <blockStride>

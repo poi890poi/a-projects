@@ -1,1 +1,4 @@
 *.pyc
+
+face/pretrained
+face/*.dat

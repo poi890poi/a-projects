@@ -117,19 +117,11 @@ class Dataset(Thread):
     @staticmethod
     def list_dataset():
         sources = [
-            ['lfw', 'http://vis-www.cs.umass.edu/lfw/lfw.tgz', ''],
-            ['vggface', 'http://www.robots.ox.ac.uk/~vgg/data/vgg_face/vgg_face_dataset.tar.gz', ''],
-            ['imdb-crop', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/imdb_crop.tar', ''],
-            #['imdb-meta', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/imdb_meta.tar', ''],
-            ['wiki-face', 'https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/static/wiki.tar.gz', ''],
-            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_1.zip', ''],
-            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_2.zip', ''],
-            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_3.zip', ''],
-            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_4.zip', ''],
-            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/helen_5.zip', ''],
-            ['helen', 'http://www.ifp.illinois.edu/~vuongle2/helen/data/annotation.zip', ''],
-            ['lfw-deepfunneled', 'http://vis-www.cs.umass.edu/lfw/lfw-deepfunneled.tgz', ''],
-            ['imm', 'http://www2.imm.dtu.dk/~aam/datasets/imm_frontal_face_db_high_res.zip', ''],
+            ['coco', 'http://images.cocodataset.org/zips/train2017.zip', ''],
+            ['coco', 'http://images.cocodataset.org/zips/val2017.zip', ''],
+            ['coco', 'http://images.cocodataset.org/zips/test2017.zip', ''],
+            ['coco', 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip', ''],
+            ['coco', 'http://images.cocodataset.org/annotations/stuff_annotations_trainval2017.zip', ''],
         ]
         return sources
 
@@ -167,7 +159,7 @@ if __name__== "__main__":
     parser.add_argument(
         '--data_dir',
         type=str,
-        default='../../data/face',
+        default='../../data/',
         help='Path to destination directory of downloaded and processed images.'
     )
     ARGS, unknown = parser.parse_known_args()

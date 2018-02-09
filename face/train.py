@@ -11,8 +11,9 @@ from skimage import data, exposure
 import argparse
 import collections
 import os.path
+import sys
 
-from getdata import recursive_file_iterator
+from datagen import ImageProcessor, RecursiveDirectoryWalkerManager
 
 ARGS = None
 
@@ -39,9 +40,11 @@ def next_file(refite):
         return load_image(f, 'wnd')
 
 
-class FaceTrainer():
+class FaceTrainer(ImageProcessor):
     def __init__(self, hog_parameters, args, silent=False):
         self.silent = silent
+
+        super(FaceTrainer, self).__init__()
 
         p = hog_parameters
         win_size = p.w # Decrease length of output
@@ -59,7 +62,6 @@ class FaceTrainer():
             nbins, deriv_aperture, win_sigma, histogram_norm_type, threshold, gamma_correction, nlevels)
         self.hog.save("hog.xml")
 
-        self.source_dir = args.source_dir
         self.hog_p = hog_parameters
         self.annotations = self.load_wiki_annotations(args.annotations)
         self.id = -1
@@ -253,41 +255,9 @@ class FaceTrainer():
         cv2.resizeWindow('wnd', src_size[1]*2, src_size[0]*2)
         cv2.imshow('wnd', img)
 
-    def hog_compute(img, p):
-        width, height, depth = img.shape
-        
-        win_size = p.w # Decrease length of output
-        block_size = p.b # In pixels
-        block_stride = p.b_stride # In pixels
-        cell_size = p.c # In pixels
-        nbins = p.nbins
-        deriv_aperture = p.aperture
-        win_sigma = p.sigma
-        histogram_norm_type = p.norm
-        threshold = p.t
-        gamma_correction = p.g
-        nlevels = p.nlevels
-        hog = cv2.HOGDescriptor(win_size, block_size, block_stride, cell_size,
-            nbins, deriv_aperture, win_sigma, histogram_norm_type, threshold, gamma_correction, nlevels)
-        hog.save("hog.xml")
-
-        win_stride = p.w_stride # Not affecting length of output
-        padding = p.padding
-        hist = hog.compute(img, win_stride, padding) # Omit locations to compute whole image
-        return hist
-
-    def compute(self):
-        i_size = np.array((width, height))
-        win_size = np.array(hog_p.w) # Decrease length of output
-        win_stride = np.array(hog_p.w_stride) # Not affecting length of output
-        padding = np.array(hog_p.padding)
-        scan_size = (i_size + padding * 2 - win_size) // win_stride * win_stride + win_size
-        win_dim = np.array(calc_num_of_blocks(scan_size, win_size, win_stride))
-
-        hist = hog_compute(img_src, hog_p)
-
-        cursor = [0, 0]
-        draw(img_src, hog_p, 'wnd', cursor, hist, anno)
+    def hog_compute(self, img, winStride=(8, 8), padding=(0, 0)):
+        print('hog_compute', img.shape)
+        return self.hog.compute(img, winStride, padding) # Omit locations to compute whole image
 
     def draw(self, background, hog_p, wnd, cursor, hist, anno):
         img = np.copy(background)
@@ -354,34 +324,72 @@ class FaceTrainer():
         cv2.resizeWindow(wnd, height*2, width*2)
         cv2.imshow(wnd, img)
 
-    def train(self):
-        batch_size = 500
+    def train(self, positive_dir, negative_dir):
+        print('train')
+        batch_size = 2000
+        increment = batch_size//10
+        
+        dir_walk_mgr = RecursiveDirectoryWalkerManager()
 
-        for i in range(batch_size):
-            ret = self.next_image()
-            while not ret:
-                ret = self.next_image()
+        # Get positive samples
+        i = batch_size
+        samples = None
+        p_len = 0
+        while i:
+            if i%increment==0:
+                sys.stdout.write('.')
+                sys.stdout.flush()
+            f = dir_walk_mgr.get_a_file(directory=positive_dir, filters=['.jpg'])
+            if f is None:
+                print('Not enough positive samples T_T')
+                break
+            img = cv2.imread(os.path.normpath(f.path), 1) # Load as RGB for compatibility
+            if img is None:
+                continue
+            hist = self.hog.compute(img, winStride=(0, 0), padding=(0, 0))
+            if samples is None:
+                samples = np.zeros((batch_size,)+hist.shape, dtype=np.float32)
+            samples[p_len,:] = hist
+            p_len += 1
+            i -= 1
 
-        # Convert objects to Numpy Objects
-        samples = np.float32(self.samples)
-        labels = np.zeros((batch_size,), dtype=np.int32)
-        labels[:] = 1
-        print('positive samples', samples.shape)
+        print(samples.shape)
+        positive_samples = np.copy(samples[0:p_len, :])
+        print(samples.shape)
 
-        # Generate random negative samples
-        #neg_data = np.random.random((batch_size*4,)+samples[0].shape).astype('float32')
-        neg_samples = np.float32(self.neg_samples)
-        neg_labels = np.zeros((batch_size*4,), dtype=np.int32)
-        print('negative samples', neg_samples.shape)
+        # Get negative samples
+        samples = None
+        n_len = p_len  * 4
+        i = n_len
+        pt = 0
+        while i:
+            if i%increment==0:
+                sys.stdout.write('.')
+                sys.stdout.flush()
+            f = dir_walk_mgr.get_a_file(directory=negative_dir, filters=['.jpg'])
+            if f is None:
+                print('Not enough negative samples T_T')
+                break
+            img = cv2.imread(os.path.normpath(f.path), 1) # Load as RGB for compatibility
+            if img is None:
+                continue
+            hist = self.hog.compute(img, winStride=(0, 0), padding=(0, 0))
+            if samples is None:
+                samples = np.zeros((n_len,)+hist.shape, dtype=np.float32)
+            try:
+                samples[pt,:] = hist
+            except:
+                pass
+            pt += 1
+            i -= 1
 
-        samples = np.concatenate([samples, neg_samples])
-        labels = np.concatenate([labels, neg_labels])
+        samples = np.concatenate([positive_samples, samples])
+        print(samples.shape)
 
-        '''entropy = np.zeros((batch_size*2,), dtype=np.float32)
-        for i in range(batch_size*2):
-            entropy[i] = scipy.stats.entropy(samples[i])
-        print(entropy)
-        print(labels)'''
+        # Convert to numpy array of float32 and create labels
+        print(p_len, n_len)
+        labels = np.zeros((p_len+n_len,), dtype=np.int32)
+        labels[0:p_len] = 1
 
         # Shuffle Samples
         rand = np.random.RandomState(321)
@@ -391,11 +399,12 @@ class FaceTrainer():
 
         print(samples.shape)
         print(labels.shape)
+        print('Training...')
 
         # Create SVM classifier
         self.svm = cv2.ml.SVM_create()
         self.svm.setType(cv2.ml.SVM_C_SVC) # cv2.ml.SVM_C_SVC, cv2.ml.ONE_CLASS
-        self.svm.setKernel(cv2.ml.SVM_RBF) # cv2.ml.SVM_LINEAR, SVM::INTER, cv2.ml.SVM_RBF
+        self.svm.setKernel(cv2.ml.SVM_LINEAR) # cv2.ml.SVM_LINEAR, SVM::INTER, cv2.ml.SVM_RBF
         # svm.setDegree(0.0)
         self.svm.setGamma(5.383)
         # svm.setCoef0(0.0)
@@ -406,7 +415,7 @@ class FaceTrainer():
 
         # Train
         self.svm.train(samples, cv2.ml.ROW_SAMPLE, labels)
-        #self.svm.save('svm_data.dat')
+        self.svm.save('svm_data.dat')
 
         '''td = cv2.TrainData.create(InputArray samples, int layout, InputArray responses, InputArray varIdx=noArray(), InputArray sampleIdx=noArray(), InputArray sampleWeights=noArray(), InputArray varType=noArray())
         err = svm.calcError(samples, cv2.ml.ROW_SAMPLE, labels)
@@ -417,7 +426,7 @@ def main():
     #pydoc.writedoc("cv2.HOGDescriptor")
 
     hog_p = HogParameters(
-        w = (128, 128), # Window size, in pixels. default [64,128]
+        w = (64, 96), # Window size, in pixels. default [64,128]
         b = (16, 16), # Block size, in pixels. default [16,16]
         b_stride = (8, 8), # Block stride, in pixels. default [8,8]
         c = (8, 8), # Cell size, in pixels. default [8,8]
@@ -431,15 +440,13 @@ def main():
         w_stride = (8, 8), # Window stride, in pixels
         padding = (8, 8), # Padding of source image for window (not for block nor cell)
     )
+
     print('norm=0')
     ft = FaceTrainer(hog_p, ARGS, silent=True)
 
-    ft.train()
-
-    ret = ft.next_image()
-    while not ret:
-        ret = ft.next_image()
-    self.predict()
+    positive_dir = os.path.join(ARGS.train_dir, 'positive')
+    negative_dir = os.path.join(ARGS.train_dir, 'negative')
+    ft.train(positive_dir, negative_dir)
 
     while True:
         k = cv2.waitKeyEx(0)
@@ -476,10 +483,16 @@ if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
         Clean up images and transform to generate more samples""")
     parser.add_argument(
-        '--source_dir',
+        '--train_dir',
         type=str,
-        default='../../data/face/wiki-face/extracted/wiki',
-        help='Path to the data.'
+        default='../../data/face/processed',
+        help='Path to train data.'
+    )
+    parser.add_argument(
+        '--test_dir',
+        type=str,
+        default='../../data/face/wiki',
+        help='Path to test data.'
     )
     parser.add_argument(
         '--annotations',
