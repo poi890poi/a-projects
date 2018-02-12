@@ -5,15 +5,17 @@ import numpy as np
 import scipy.io as sio
 import scipy.stats
 from scipy.misc import imresize
-from skimage.feature import hog
-from skimage import data, exposure
+from skimage import data, exposure, feature
+from sklearn.svm import LinearSVC
+from sklearn.grid_search import GridSearchCV
 
 import argparse
 import collections
 import os.path
 import sys
+import pickle
 
-from datagen import DataGenerator, ImageProcessor, ImageProcessorParameters
+from datagen import DataGenerator, ImageProcessor
 from train import FaceTrainer
 
 ARGS = None
@@ -26,8 +28,9 @@ class FaceDetector(DataGenerator):
         self.args = args
         super(FaceDetector, self).__init__(args)
 
-    def set_detector(self, detector):
-        self.detector = detector
+    def load_svm(self):
+        with open('svm.dat', 'rb') as f:
+            self.svm = pickle.load(f)
         
     def spawn(self, img, preview):
         print('spawn')
@@ -35,17 +38,24 @@ class FaceDetector(DataGenerator):
         channels = cv2.split(gray)
         gray = channels[0]
 
-        predictions = self.detector.predict(gray)
-        for face in predictions:
-            p1 = (int(face[1]), int(face[2]))
-            p2 = (int(face[3]), int(face[4]))
-            cv2.rectangle(img, p1, p2, (0, 255, 255), 1)
-        print('predictions', predictions)
+        height, width, depth = img.shape
 
-        if preview:
-            self.draw(gray, 'gray')
-            self.draw(img, 'img')
-            self.wait_user() # Always wait for user input if preview is displayed
+        print('img shape', img.shape)
+
+        hist, hog_image = feature.hog(gray, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
+            visualise=True, transform_sqrt=True, feature_vector=False)
+        hog_image = (hog_image*255).astype(dtype=np.uint8)
+        #hog_image = exposure.rescale_intensity(hog_image, in_range=(0, 255))
+
+        preview = np.zeros((height, width*2, depth), dtype=np.uint8)
+        preview[:,0:width,:] = np.repeat(gray[:, :, np.newaxis], 3, axis=2)
+        preview[:,width:width*2,:] = np.repeat(hog_image[:, :, np.newaxis], 3, axis=2)
+
+        p = self.svm.predict(np.reshape(hist, (1, 2772)))
+        print(p)
+
+        self.draw(preview, 'preview')
+        self.wait_user() # Always wait for user input if preview is displayed
 
     def wait_user(self):
         while True:
@@ -70,29 +80,9 @@ class FaceDetector(DataGenerator):
 def main():
     #pydoc.writedoc("cv2.HOGDescriptor")
 
-    hog_p = HogParameters(
-        w = (64, 96), # Window size, in pixels. default [64,128]
-        b = (16, 16), # Block size, in pixels. default [16,16]
-        b_stride = (8, 8), # Block stride, in pixels. default [8,8]
-        c = (8, 8), # Cell size, in pixels. default [8,8]
-        nbins = 9, # Number of bins. default 9
-        aperture = 1, # aperture_size Size of the extended Sobel kernel, must be 1, 3, 5 or 7. default 1
-        sigma = -1, # Windows sigma. Gaussian smoothing window parameter. default -1
-        norm = 0, # Histogram normalization method. default 'L2Hys'
-        t = 0.2, # L2 Hysterisis threshold. normalization method shrinkage. default 0.2
-        g = True, # Flag to specify whether the gamma correction preprocessing is required or not. default true
-        nlevels = 64, # Maximum number of detection window increases. default 64
-        w_stride = (8, 8), # Window stride, in pixels
-        padding = (8, 8), # Padding of source image for window (not for block nor cell)
-    )
-    ft = FaceTrainer(hog_p, ARGS, silent=True)
-    ft.load('svm_data.dat')
-
     with FaceDetector(ARGS) as fd:
-        fd.set_detector(ft)
-        fd.gen(preview=True, imp=ImageProcessorParameters(
-            convert_gray = ImageProcessor.GRAY_NONE,
-        ))
+        fd.load_svm()
+        fd.gen(preview=True)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
@@ -100,7 +90,9 @@ if __name__== "__main__":
     parser.add_argument(
         '--source_dir',
         type=str,
-        default='../../data/face/wiki-face/extracted/wiki',
+        default='../../data/coco',
+        #default='../../data/face/wiki-face/extracted/wiki',
+        #default='../../data/face/processed/positive',
         help='Path to the data.'
     )
     parser.add_argument(

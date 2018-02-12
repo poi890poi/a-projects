@@ -5,13 +5,15 @@ import numpy as np
 import scipy.io as sio
 import scipy.stats
 from scipy.misc import imresize
-from skimage.feature import hog
-from skimage import data, exposure
+from skimage import data, exposure, feature
+from sklearn.svm import LinearSVC
+from sklearn.grid_search import GridSearchCV
 
 import argparse
 import collections
 import os.path
 import sys
+import pickle
 
 from datagen import ImageProcessor, RecursiveDirectoryWalkerManager
 
@@ -62,29 +64,25 @@ class FaceTrainer(ImageProcessor):
         print('load', svec.dtype, svec.shape)
         print('size', self.hog.getDescriptorSize())
         self.hog.setSVMDetector(svec)
-        return
 
-        svec = self.svm.getSupportVectors()[0]
-        rho = -self.svm.getDecisionFunction(0)[0]
-        svec = np.append(svec, rho)
-        print('load pretrained svm', svec.dtype, svec.shape)
-        self.hog.setSVMDetector(svec)
+        #pydoc.writedoc("cv2.ml.SVM_create")
 
     def predict(self, img):
         (rects, weights) = self.hog.detectMultiScale(img,
-            winStride=(8, 8), padding=(0, 0), scale=1.05, useMeanshiftGrouping=False)
+            winStride=(4, 4), padding=(0, 0), scale=1.03, useMeanshiftGrouping=False)
         predictions = np.column_stack([weights, rects])
         predictions = predictions[np.lexsort(np.fliplr(predictions).T)]
         return predictions
         #self.draw_predict(predictions[-3:])
 
-    def train(self, positive_dir, negative_dir):
+    def train(self, positive_dir, negative_dir, hnm_dir):
         batch_size = 2000
         increment = batch_size//10
         
         dir_walk_mgr = RecursiveDirectoryWalkerManager()
 
         # Get positive samples
+        print('Loading positive samples...')
         i = batch_size
         samples = None
         p_len = 0
@@ -103,8 +101,8 @@ class FaceTrainer(ImageProcessor):
             img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
             channels = cv2.split(img)
             img = channels[0]
-
-            hist = self.hog.compute(img, winStride=(0, 0), padding=(0, 0))
+            hist = feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
+                visualise=False, transform_sqrt=True, feature_vector=True)
             if samples is None:
                 samples = np.zeros((batch_size,)+hist.shape, dtype=np.float32)
             samples[p_len,:] = hist
@@ -113,11 +111,12 @@ class FaceTrainer(ImageProcessor):
 
         print(samples.shape)
         positive_samples = np.copy(samples[0:p_len, :])
-        print(samples.shape)
+        print('samples', samples.shape)
 
         # Get negative samples
+        print('Loading negative samples...')
         samples = None
-        n_len = p_len  * 4
+        n_len = p_len  * 2
         i = n_len
         pt = 0
         while i:
@@ -135,23 +134,63 @@ class FaceTrainer(ImageProcessor):
             img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
             channels = cv2.split(img)
             img = channels[0]
-
-            hist = self.hog.compute(img, winStride=(0, 0), padding=(0, 0))
+            hist = feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
+                visualise=False, transform_sqrt=True, feature_vector=True)
             if samples is None:
                 samples = np.zeros((n_len,)+hist.shape, dtype=np.float32)
             try:
-                samples[pt,:] = hist
+                samples[pt,:] = hist.ravel()
             except:
                 pass
             pt += 1
             i -= 1
 
         samples = np.concatenate([positive_samples, samples])
-        print(samples.shape)
+        print('samples', samples.shape)
+
+        # Get hard-negative-mining samples
+        for di in range(1):
+            directory = os.path.join(hnm_dir, str(di+1).zfill(4))
+            print('Loading hard-negative-mining samples...', directory)
+
+            hnm_samples = None
+            i = batch_size
+            pt = 0
+            while i:
+                if i%increment==0:
+                    sys.stdout.write('.')
+                    sys.stdout.flush()
+
+                f = dir_walk_mgr.get_a_file(directory=directory, filters=['.jpg'])
+                if f is None:
+                    print('Not enough hard-negative-mining samples T_T')
+                    break
+                img = cv2.imread(os.path.normpath(f.path), 1) # Load as RGB for compatibility
+                if img is None:
+                    continue
+
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                channels = cv2.split(img)
+                img = channels[0]
+                hist = feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
+                    visualise=False, transform_sqrt=True, feature_vector=True)
+                if hnm_samples is None:
+                    hnm_samples = np.zeros((batch_size,)+hist.shape, dtype=np.float32)
+                try:
+                    hnm_samples[pt,:] = hist.ravel()
+                except:
+                    pass
+                pt += 1
+                i -= 1
+
+            hnm_samples = np.copy(hnm_samples[0:pt, :])
+            print(hnm_samples.shape)
+            samples = np.concatenate([samples, hnm_samples])
+            print('samples', samples.shape)
+
 
         # Convert to numpy array of float32 and create labels
-        print(p_len, n_len)
-        labels = np.zeros((p_len+n_len,), dtype=np.int32)
+        labels = np.zeros((samples.shape[0],), dtype=np.int32)
         labels[0:p_len] = 1
 
         # Shuffle Samples
@@ -165,20 +204,11 @@ class FaceTrainer(ImageProcessor):
         print('Training...')
 
         # Create SVM classifier
-        self.svm = cv2.ml.SVM_create()
-        self.svm.setType(cv2.ml.SVM_C_SVC) # cv2.ml.SVM_C_SVC, cv2.ml.ONE_CLASS
-        self.svm.setKernel(cv2.ml.SVM_LINEAR) # cv2.ml.SVM_LINEAR, SVM::INTER, cv2.ml.SVM_RBF
-        # svm.setDegree(0.0)
-        self.svm.setGamma(5.383)
-        # svm.setCoef0(0.0)
-        self.svm.setC(2.67)
-        # svm.setNu(0.0)
-        # svm.setP(0.0)
-        # svm.setClassWeights(None)
-
-        # Train
-        self.svm.train(samples, cv2.ml.ROW_SAMPLE, labels)
-        self.svm.save('svm_data.dat')
+        grid = GridSearchCV(LinearSVC(), {'C': [1.0, 2.0, 4.0, 8.0]})
+        grid.fit(samples, labels)
+        print(grid.best_score_)
+        with open('svm.dat', 'wb') as f:
+            pickle.dump(grid, f)
 
         '''td = cv2.TrainData.create(InputArray samples, int layout, InputArray responses, InputArray varIdx=noArray(), InputArray sampleIdx=noArray(), InputArray sampleWeights=noArray(), InputArray varType=noArray())
         err = svm.calcError(samples, cv2.ml.ROW_SAMPLE, labels)
@@ -208,7 +238,8 @@ def main():
 
     positive_dir = os.path.join(ARGS.train_dir, 'positive')
     negative_dir = os.path.join(ARGS.train_dir, 'negative')
-    ft.train(positive_dir, negative_dir)
+    hnm_dir = os.path.join(ARGS.train_dir, 'hnm')
+    ft.train(positive_dir, negative_dir, hnm_dir)
 
     while True:
         k = cv2.waitKeyEx(0)

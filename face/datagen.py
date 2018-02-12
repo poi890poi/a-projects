@@ -11,8 +11,9 @@ from skimage import data, exposure
 import argparse
 import collections
 import os.path
-import sys
+import sys, hashlib
 from uuid import uuid4
+import os, stat
 
 ARGS = None
 
@@ -51,38 +52,48 @@ class RecursiveDirectoryWalkerManager():
             return f
         return None
 
-ImageProcessorParameters = collections.namedtuple('ImageProcessorParameters', 'convert_gray')
-
 class ImageProcessor():
-    GRAY_NONE = 0
+    GRAY_COLOR = 0
     GRAY_YCRCB = 1
 
     def __init__(self):
-        self.minsize = 256
-        self.maxsize = 256
         self.viewports = dict()
 
-    def draw(self, img, wname):
+    def draw(self, img, wname, minsize=256):
         if wname not in self.viewports:
             cv2.namedWindow(wname, cv2.WINDOW_NORMAL)
             self.viewports[wname] = 1
         size = np.array(img.shape)
         r = 1
-        if size[0] < self.minsize or size[1] < self.minsize:
-            r = max(self.minsize//size[0]+1, self.minsize//size[1]+1)
+        if size[0] < minsize or size[1] < minsize:
+            r = max(minsize//size[0]+1, minsize//size[1]+1)
             size = size*r
         cv2.resizeWindow(wname, size[1], size[0])
         cv2.imshow(wname, img)
 
-    def preprocess(self, img, imp=None):
+    def cell_resize(self, img, cell_size=8):
+        print('cell_resize', img.shape)
+
+        depth = 1
+        if len(img.shape)==3:
+            height, width, depth = img.shape
+        else:
+            height, width = img.shape
+
+        height = height//cell_size*cell_size
+        width = width//cell_size*cell_size
+        
+        return np.copy(img[0:height, 0:width, :])
+
+    def preprocess(self, img, convert_gray=GRAY_COLOR, maxsize=512):
         size = np.array(img.shape)
         r = 1.
-        if size[0] > self.maxsize or size[1] > self.maxsize:
-            r = min(self.maxsize/size[0], self.maxsize/size[1])
+        if size[0] > maxsize or size[1] > maxsize:
+            r = min(maxsize/size[0], maxsize/size[1])
         size = ((size.astype('float32'))*r).astype('int16')
         img = imresize(img, size)
         
-        if imp and imp.convert_gray==self.GRAY_YCRCB:
+        if convert_gray==self.GRAY_YCRCB:
             # Convert to YCrCb and keep only Y channel.
             img = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
             channels = cv2.split(img)
@@ -90,9 +101,9 @@ class ImageProcessor():
 
         depth = 1
         if len(img.shape)==3:
-            width, height, depth = img.shape
+            height, width, depth = img.shape
         else:
-            width, height = img.shape
+            height, width = img.shape
         
         # Denoise and equalize. Note 2018-02-09: Denoising benefits HAAR face detector significantly
         if depth==1:
@@ -108,7 +119,7 @@ class ImageProcessor():
             img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
         else:
             raise TypeError('ImageProcessor::preprocess() expects image of 1 or 3 channels')
-        
+
         return img
 
     def gray2rgb(self, gray):
@@ -137,7 +148,7 @@ class DataGenerator(ImageProcessor):
         super(DataGenerator, self).__init__()
         self.dir_walk_mgr = RecursiveDirectoryWalkerManager()
 
-    def gen(self, preview=False, imp=None):
+    def gen(self, preview=False):
         # Each call get a file from source directory.
         # Returns only when a valid sample is found (spawn() returns True),
         # or when there's no more sample in source directory
@@ -151,7 +162,7 @@ class DataGenerator(ImageProcessor):
             if img is None:
                 continue
 
-            img = self.preprocess(img, imp)
+            img = self.preprocess(img)
             self.spawn(img, preview)
 
     def spawn(self, img, preview):
@@ -166,12 +177,18 @@ class DataGenerator(ImageProcessor):
         pass
 
 
-def prepare_dir(head, trail, create=True, empty=False):
+def hash_str(text):
+    h = hashlib.new('ripemd160')
+    h.update(text.encode('utf-8'))
+    return h.hexdigest()
+
+def prepare_dir(head, trail='', create=True, empty=False):
     directory = norm_join_path(head, trail)
     if empty and os.path.isdir(directory):
         print()
         print('Removing directory:', directory)
         tmp = norm_join_path(head, hash_str(directory))
+        os.chmod(directory, stat.S_IWRITE)
         os.rename(directory, tmp)
         os.removedirs(tmp)
     if create and not os.path.exists(directory):
@@ -296,7 +313,7 @@ class FaceGenerator(DataGenerator):
 def main():
     with FaceGenerator(ARGS) as dg:
         dg.gen(preview=ARGS.preview, imp=ImageProcessorParameters(
-            convert_gray = ImageProcessor.GRAY_NONE,
+            convert_gray = ImageProcessor.GRAY_COLOR,
         ))
 
 
