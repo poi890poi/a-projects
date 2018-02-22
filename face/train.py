@@ -6,8 +6,6 @@ import scipy.io as sio
 import scipy.stats
 from scipy.misc import imresize
 from skimage import data, exposure, feature
-from sklearn.svm import LinearSVC
-from sklearn.grid_search import GridSearchCV
 
 import argparse
 import collections
@@ -16,35 +14,18 @@ import sys
 import pickle
 
 from datagen import ImageProcessor, RecursiveDirectoryWalkerManager
+from config import HyperParam, Model
 
 ARGS = None
 
 HogParameters = collections.namedtuple('HogParameters', 'w, b, b_stride, c, nbins, aperture, sigma, norm, t, g, nlevels, w_stride, padding')
 
 class FaceTrainer(ImageProcessor):
-    def __init__(self, hog_parameters, args, silent=False):
+    def __init__(self, args, silent=False):
         self.silent = silent
 
         super(FaceTrainer, self).__init__()
 
-        p = hog_parameters
-        win_size = p.w # Decrease length of output
-        block_size = p.b # In pixels
-        block_stride = p.b_stride # In pixels
-        cell_size = p.c # In pixels
-        nbins = p.nbins
-        deriv_aperture = p.aperture
-        win_sigma = p.sigma
-        histogram_norm_type = p.norm
-        threshold = p.t
-        gamma_correction = p.g
-        nlevels = p.nlevels
-        self.hog = cv2.HOGDescriptor(win_size, block_size, block_stride, cell_size,
-            nbins, deriv_aperture, win_sigma, histogram_norm_type, threshold, gamma_correction, nlevels)
-        self.hog.save("hog.xml")
-        print('descriptor size', self.hog.getDescriptorSize())
-
-        self.hog_p = hog_parameters
         self.id = -1
         self.anno = None
 
@@ -75,9 +56,22 @@ class FaceTrainer(ImageProcessor):
         return predictions
         #self.draw_predict(predictions[-3:])
 
+    def compute_hog(self, img):
+        height, width, *rest = img.shape
+        t_size = HyperParam.window_size
+
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        channels = cv2.split(img)
+        img = channels[0]
+        img = imresize(img, t_size)
+        return (feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
+            visualise=False, transform_sqrt=True, feature_vector=True), img)
+
     def train(self, positive_dir, negative_dir, hnm_dir):
-        batch_size = 2000
-        increment = batch_size//10
+        model = Model.svc()
+
+        batch_size = 6000
+        increment = batch_size//100
         
         dir_walk_mgr = RecursiveDirectoryWalkerManager()
 
@@ -98,11 +92,7 @@ class FaceTrainer(ImageProcessor):
             if img is None:
                 continue
 
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-            channels = cv2.split(img)
-            img = channels[0]
-            hist = feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
-                visualise=False, transform_sqrt=True, feature_vector=True)
+            hist, img = self.compute_hog(img)
             if samples is None:
                 samples = np.zeros((batch_size,)+hist.shape, dtype=np.float32)
             samples[p_len,:] = hist
@@ -111,12 +101,12 @@ class FaceTrainer(ImageProcessor):
 
         print(samples.shape)
         positive_samples = np.copy(samples[0:p_len, :])
-        print('samples', samples.shape)
+        print('Positive samples loaded:', positive_samples.shape)
 
         # Get negative samples
         print('Loading negative samples...')
         samples = None
-        n_len = p_len  * 2
+        n_len = p_len  * 10
         i = n_len
         pt = 0
         while i:
@@ -131,11 +121,7 @@ class FaceTrainer(ImageProcessor):
             if img is None:
                 continue
 
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-            channels = cv2.split(img)
-            img = channels[0]
-            hist = feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
-                visualise=False, transform_sqrt=True, feature_vector=True)
+            hist, img = self.compute_hog(img)
             if samples is None:
                 samples = np.zeros((n_len,)+hist.shape, dtype=np.float32)
             try:
@@ -145,16 +131,20 @@ class FaceTrainer(ImageProcessor):
             pt += 1
             i -= 1
 
+        print('Negative samples loaded:', samples.shape)
         samples = np.concatenate([positive_samples, samples])
-        print('samples', samples.shape)
 
         # Get hard-negative-mining samples
-        for di in range(1):
-            directory = os.path.join(hnm_dir, str(di+1).zfill(4))
+        for di in range(10):
+            directory = os.path.normpath(os.path.join(hnm_dir, str(di+1).zfill(4)))
+            if not os.path.isdir(directory):
+                break
             print('Loading hard-negative-mining samples...', directory)
 
             hnm_samples = None
-            i = batch_size
+            t_len = batch_size * 10
+            i = t_len
+            print('target sample size', i)
             pt = 0
             while i:
                 if i%increment==0:
@@ -165,17 +155,14 @@ class FaceTrainer(ImageProcessor):
                 if f is None:
                     print('Not enough hard-negative-mining samples T_T')
                     break
+
                 img = cv2.imread(os.path.normpath(f.path), 1) # Load as RGB for compatibility
                 if img is None:
                     continue
 
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-                channels = cv2.split(img)
-                img = channels[0]
-                hist = feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
-                    visualise=False, transform_sqrt=True, feature_vector=True)
+                hist, img = self.compute_hog(img)
                 if hnm_samples is None:
-                    hnm_samples = np.zeros((batch_size,)+hist.shape, dtype=np.float32)
+                    hnm_samples = np.zeros((t_len,)+hist.shape, dtype=np.float32)
                 try:
                     hnm_samples[pt,:] = hist.ravel()
                 except:
@@ -184,10 +171,10 @@ class FaceTrainer(ImageProcessor):
                 i -= 1
 
             hnm_samples = np.copy(hnm_samples[0:pt, :])
-            print(hnm_samples.shape)
+            print('HNM samples loaded:', hnm_samples.shape)
             samples = np.concatenate([samples, hnm_samples])
-            print('samples', samples.shape)
-
+        
+        print('Total samples:', samples.shape)
 
         # Convert to numpy array of float32 and create labels
         labels = np.zeros((samples.shape[0],), dtype=np.int32)
@@ -204,11 +191,10 @@ class FaceTrainer(ImageProcessor):
         print('Training...')
 
         # Create SVM classifier
-        grid = GridSearchCV(LinearSVC(), {'C': [1.0, 2.0, 4.0, 8.0]})
-        grid.fit(samples, labels)
-        print(grid.best_score_)
+        model.fit(samples, labels)
+        print(model.best_score_)
         with open('svm.dat', 'wb') as f:
-            pickle.dump(grid, f)
+            pickle.dump(model, f)
 
         '''td = cv2.TrainData.create(InputArray samples, int layout, InputArray responses, InputArray varIdx=noArray(), InputArray sampleIdx=noArray(), InputArray sampleWeights=noArray(), InputArray varType=noArray())
         err = svm.calcError(samples, cv2.ml.ROW_SAMPLE, labels)
@@ -218,23 +204,7 @@ class FaceTrainer(ImageProcessor):
 def main():
     #pydoc.writedoc("cv2.HOGDescriptor")
 
-    hog_p = HogParameters(
-        w = (64, 96), # Window size, in pixels. default [64,128]
-        b = (16, 16), # Block size, in pixels. default [16,16]
-        b_stride = (8, 8), # Block stride, in pixels. default [8,8]
-        c = (8, 8), # Cell size, in pixels. default [8,8]
-        nbins = 9, # Number of bins. default 9
-        aperture = 1, # aperture_size Size of the extended Sobel kernel, must be 1, 3, 5 or 7. default 1
-        sigma = -1, # Windows sigma. Gaussian smoothing window parameter. default -1
-        norm = 0, # Histogram normalization method. default 'L2Hys'
-        t = 0.2, # L2 Hysterisis threshold. normalization method shrinkage. default 0.2
-        g = True, # Flag to specify whether the gamma correction preprocessing is required or not. default true
-        nlevels = 64, # Maximum number of detection window increases. default 64
-        w_stride = (8, 8), # Window stride, in pixels
-        padding = (8, 8), # Padding of source image for window (not for block nor cell)
-    )
-
-    ft = FaceTrainer(hog_p, ARGS, silent=True)
+    ft = FaceTrainer(ARGS, silent=True)
 
     positive_dir = os.path.join(ARGS.train_dir, 'positive')
     negative_dir = os.path.join(ARGS.train_dir, 'negative')

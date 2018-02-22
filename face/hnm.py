@@ -15,8 +15,10 @@ import os.path
 import sys, hashlib
 import pickle
 
-from datagen import DataGenerator, ImageProcessor, prepare_dir, hash_str
+from datagen import DataGenerator, ImageProcessor
+from utilities import DataUtilities, ImageUtilities
 from train import FaceTrainer
+from config import HyperParam
 
 ARGS = None
 
@@ -33,10 +35,11 @@ class FaceDetector(DataGenerator):
 
         self.face_cascade = cv2.CascadeClassifier('./pretrained/haarcascades/haarcascade_frontalcatface.xml')
 
-        prepare_dir(self.args.dest_dir, empty=True)
+        DataUtilities.prepare_dir(self.args.dest_dir, empty=True)
 
         self.hnm_index = 0
-        self.limit = 4000
+        self.limit = 2000
+        self.skip = 10000
         
     def spawn(self, img, preview):
         img = self.cell_resize(img)
@@ -64,7 +67,10 @@ class FaceDetector(DataGenerator):
             
         if preview: hog_image = (hog_image*255).astype(dtype=np.uint8)
         #hog_image = exposure.rescale_intensity(hog_image, in_range=(0, 255))
-        descriptor_size = (11, 7, 2, 2, 9)
+
+        window_size = HyperParam.window_size
+        descriptor_size = (int((window_size[0]-16)/8+1), int((window_size[1]-16)/8+1), 2, 2, 9)
+
         feature_vector_size = np.prod(descriptor_size)
         print('feature_vector_size', feature_vector_size)
         img_hog_size = hist.shape
@@ -106,12 +112,12 @@ class FaceDetector(DataGenerator):
                 c = coords[i]
                 #print(p, c)
                 p1 = (c[1]*8, c[0]*8)
-                p2 = (c[1]*8+64, c[0]*8+96)
+                p2 = (c[1]*8+window_size[1], c[0]*8+window_size[0])
                 hnm = img[p1[1]:p2[1], p1[0]:p2[0], :]
 
                 if preview:
                     cv2.rectangle(canvas, p1, p2, (0, 255, 0), 1)
-                    canvas[c_scan[0]*96:(c_scan[0]+1)*96, width+c_scan[1]*64:width+(c_scan[1]+1)*64, :] = hnm
+                    canvas[c_scan[0]*window_size[0]:(c_scan[0]+1)*window_size[0], width+c_scan[1]*window_size[1]:width+(c_scan[1]+1)*window_size[1], :] = hnm
 
                 h = hashlib.new('ripemd160')
                 h.update(hnm.tobytes())

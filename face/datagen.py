@@ -52,6 +52,7 @@ class RecursiveDirectoryWalkerManager():
             return f
         return None
 
+
 class ImageProcessor():
     GRAY_COLOR = 0
     GRAY_YCRCB = 1
@@ -219,7 +220,7 @@ class FaceGenerator(DataGenerator):
 
         if self.face_cascade is None: self.face_cascade = cv2.CascadeClassifier('./pretrained/haarcascades/haarcascade_frontalcatface.xml')
         if self.eye_cascade is None: self.eye_cascade = cv2.CascadeClassifier('./pretrained/haarcascades/haarcascade_eye.xml')
-        faces = self.face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=5)
+        faces = self.face_cascade.detectMultiScale(img, scaleFactor=1.05, minNeighbors=3)
 
         if len(faces):
             eyeslist = list()
@@ -229,8 +230,9 @@ class FaceGenerator(DataGenerator):
                 eyes = self.eye_cascade.detectMultiScale(roi_gray)
                 if len(eyes)==2:
                     eyeslist.append(eyes)
+                    
                     # Normalize face position using height of eye
-                    ex1, ey1, ew1, eh1 = eyes[0]
+                    """ex1, ey1, ew1, eh1 = eyes[0]
                     ex2, ey2, ew2, eh2 = eyes[1]
                     # Normalize width and x position
                     eyedistance = abs(ex2 + ew2//2 - ex1 - ew1//2)
@@ -240,7 +242,10 @@ class FaceGenerator(DataGenerator):
                     # Normalize height and y position
                     eyelevel = y + (ey1 + eh1//2 + ey2 + eh2//2)//2
                     h = int(w * t_size[1] / t_size[0])
-                    y = int(eyelevel - h//3)
+                    y = int(eyelevel - h//3)"""
+               
+                    h = int(w * t_size[1] / t_size[0])
+                    
                     # TODO: Check if source ROI is too small
 
                     if not (w < t_size[0] or h < t_size[1] or y < 0 or y+h >= img.shape[1] or x < 0 or x+w >= img.shape[0]):
@@ -312,9 +317,7 @@ class FaceGenerator(DataGenerator):
 
 def main():
     with FaceGenerator(ARGS) as dg:
-        dg.gen(preview=ARGS.preview, imp=ImageProcessorParameters(
-            convert_gray = ImageProcessor.GRAY_COLOR,
-        ))
+        dg.gen(preview=ARGS.preview)
 
 
 if __name__== "__main__":
