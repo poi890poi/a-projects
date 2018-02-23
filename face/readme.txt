@@ -8,11 +8,17 @@ Histograms of Oriented Gradients for Human Detection https://lear.inrialpes.fr/p
 Face Detection: Histogram of Oriented Gradients and Bag of Feature Method http://worldcomp-proceedings.com/proc/p2013/IPC4143.pdf
 Classifier comparison http://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html
 cv::ml::SVM Class Reference https://docs.opencv.org/3.3.0/d1/d2d/classcv_1_1ml_1_1SVM.html
+Comparing randomized search and grid search for hyperparameter estimation http://scikit-learn.org/stable/auto_examples/model_selection/plot_randomized_search.html
 
 SIFT
 HOG
 SURF
 HAAR
+
+Prebuilt dlib
+    https://pypi.python.org/pypi/dlib/18.17.100
+
+Install cmake
 
 
     svm.train(samples, cv2.ml.ROW_SAMPLE, labels)
