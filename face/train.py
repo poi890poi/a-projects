@@ -15,6 +15,7 @@ import pickle
 
 from datagen import ImageProcessor, RecursiveDirectoryWalkerManager
 from config import HyperParam, Model
+from utilities import ImageUtilities
 
 ARGS = None
 
@@ -57,15 +58,8 @@ class FaceTrainer(ImageProcessor):
         #self.draw_predict(predictions[-3:])
 
     def compute_hog(self, img):
-        height, width, *rest = img.shape
-        t_size = HyperParam.window_size
-
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-        channels = cv2.split(img)
-        img = channels[0]
-        img = imresize(img, t_size)
-        return (feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
-            visualise=False, transform_sqrt=True, feature_vector=True), img)
+        return feature.hog(img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), block_norm='L2-Hys',
+            visualise=False, transform_sqrt=True, feature_vector=True)
 
     def train(self, positive_dir, negative_dir, hnm_dir):
         model = Model.svc()
@@ -92,12 +86,21 @@ class FaceTrainer(ImageProcessor):
             if img is None:
                 continue
 
-            hist, img = self.compute_hog(img)
-            if samples is None:
-                samples = np.zeros((batch_size,)+hist.shape, dtype=np.float32)
-            samples[p_len,:] = hist
-            p_len += 1
-            i -= 1
+            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb)
+            gray = imresize(gray, HyperParam.window_size)
+
+            for j in range(3):
+                intensity = 0.3*j
+
+                img = ImageUtilities.transform(gray, intensity=intensity)
+                if p_len < 100: cv2.imwrite('./preview/'+str(p_len).zfill(2)+'.jpg', img)
+                hist = self.compute_hog(img)
+                if samples is None:
+                    samples = np.zeros((batch_size,)+hist.shape, dtype=np.float32)
+                samples[p_len,:] = hist
+                p_len += 1
+                i -= 1
+                if p_len >= len(samples): break
 
         print(samples.shape)
         positive_samples = np.copy(samples[0:p_len, :])
@@ -121,7 +124,9 @@ class FaceTrainer(ImageProcessor):
             if img is None:
                 continue
 
-            hist, img = self.compute_hog(img)
+            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb)
+            gray = imresize(gray, HyperParam.window_size)
+            hist = self.compute_hog(gray)
             if samples is None:
                 samples = np.zeros((n_len,)+hist.shape, dtype=np.float32)
             try:
@@ -160,7 +165,9 @@ class FaceTrainer(ImageProcessor):
                 if img is None:
                     continue
 
-                hist, img = self.compute_hog(img)
+                gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb)
+                gray = imresize(gray, HyperParam.window_size)
+                hist = self.compute_hog(gray)
                 if hnm_samples is None:
                     hnm_samples = np.zeros((t_len,)+hist.shape, dtype=np.float32)
                 try:

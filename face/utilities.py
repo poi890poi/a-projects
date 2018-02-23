@@ -4,7 +4,6 @@ import math
 import numpy as np
 from scipy.misc import imresize
 
-
 import argparse
 import collections
 import os.path
@@ -12,6 +11,7 @@ import sys, hashlib
 from uuid import uuid4
 import os, stat
 
+import random
 
 class DataUtilities():
     @staticmethod
@@ -121,6 +121,42 @@ class ImageUtilities():
         # Clone single channel to RGB
         return np.repeat(gray[:, :, np.newaxis], 3, axis=2)
 
+    @staticmethod
+    def transform(proto, intensity=1.0):
+        height, width, *rest = proto.shape
+        
+        theta = 15. * intensity # Default rotation +/- 15 degrees as described in paper by Yann LeCun
+        M = cv2.getRotationMatrix2D((width/2, height/2),
+            random.uniform(-theta, theta), 1)
+
+        # Rotate
+        img = cv2.warpAffine(proto, M, (width, height), borderMode=cv2.BORDER_REPLICATE)
+
+        # Perpective transformation
+        d = width * 0.2 * intensity
+        rect = np.array([
+            [random.uniform(-d, d), random.uniform(-d, d)],
+            [width + random.uniform(-d, d), random.uniform(-d, d)],
+            [width + random.uniform(-d, d), height + random.uniform(-d, d)],
+            [random.uniform(-d, d), height + random.uniform(-d, d)]], dtype = "float32")
+        dst = np.array([
+            [0, 0],
+            [width - 1, 0],
+            [width - 1, height - 1],
+            [0, height - 1]], dtype = "float32")
+        M = cv2.getPerspectiveTransform(rect, dst)
+        img = cv2.warpPerspective(img, M, (width, height), borderMode=cv2.BORDER_REPLICATE)
+
+        return img
+
+    @staticmethod
+    def rect_to_bb(rect):
+        x = rect.left()
+        y = rect.top()
+        w = rect.right() - x
+        h = rect.bottom() - y
+    
+        return (x, y, w, h)
 
 class Singleton(type):
     _instances = {}

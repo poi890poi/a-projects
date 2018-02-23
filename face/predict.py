@@ -212,6 +212,8 @@ def main():
         binary = cv2.threshold(heat_map, 0, 255, cv2.THRESH_BINARY)[1]
         labels = measure.label(binary)
         for region in measure.regionprops(labels):
+            p = region.area/(region.bbox[3]-region.bbox[1])/(region.bbox[2]-region.bbox[0])
+            print('region', region.bbox_area, region.area, region.filled_area, region.solidity)
             p1 = np.array([region.bbox[1]*mrate[1], region.bbox[0]*mrate[0]]).astype(dtype=np.int)
             p2 = np.array([region.bbox[3]*mrate[1], region.bbox[2]*mrate[0]]).astype(dtype=np.int)
             cv2.rectangle(source, tuple(p1), tuple(p2), (0, 255, 0), 1)

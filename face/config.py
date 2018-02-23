@@ -19,14 +19,14 @@ class Model():
         #return GridSearchCV(SVC(), {'C': [1.0, 2.0, 4.0, 8.0]})
 
         # specify parameters and distributions to sample from
-        param_dist = {"max_depth": [5, None],
-                    "max_features": sp_randint(8, 32),
-                    "min_samples_split": sp_randint(2, 16),
-                    "min_samples_leaf": sp_randint(1, 16),
+        param_dist = {"max_depth": [4, None],
+                    "max_features": sp_randint(1, 11),
+                    "min_samples_split": sp_randint(2, 11),
+                    "min_samples_leaf": sp_randint(1, 11),
                     "bootstrap": [True, False],
                     "criterion": ["gini", "entropy"]}
 
-        clf = RandomForestClassifier(n_estimators=128)
+        clf = RandomForestClassifier(n_estimators=20)
 
         # run randomized search
         n_iter_search = 128
