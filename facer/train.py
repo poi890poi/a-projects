@@ -1,4 +1,5 @@
 from shared.utilities import *
+from shared.models import *
 from shared.dataset import *
 from face.dlibdetect import FaceDetector
 
@@ -14,12 +15,18 @@ def run(args):
     print('do something...')
 
     # Prepare train data
-    train_count = 96
-    val_count = 32
-    sample_count = train_count+val_count
+    train_count = 32
+    val_count = 8
+    sample_count = train_count + val_count
+    positive_count = sample_count//2
+    negative_count = sample_count - positive_count
 
-    model = TensorflowModel('afanet')
-    classifier = model.get_estimator()
+    depth = 5
+    out_weights = np.zeros((depth,), dtype=np.float)
+    out_weights[0] = 1.
+
+    model = TensorflowModel(args.model)
+    classifier = model.get_estimator(out_weights)
 
     # Set up logging for predictions
     tensors_to_log = {}
@@ -37,7 +44,7 @@ def run(args):
         randomize = np.arange(sample_count)
         np.random.shuffle(randomize)
         rindex = 0
-        for i in range(train_count):
+        for i in range(positive_count):
             f = DirectoryWalker().get_a_file(directory='../data/face/processed/positive', filters=['.jpg'])
             image = cv2.imread(f.path, 1)
             image = ImageUtilities.preprocess(image)
@@ -45,7 +52,7 @@ def run(args):
             a[randomize[rindex], :, :, :] = image
             b[randomize[rindex], :] = 1
             rindex += 1
-        for i in range(val_count):
+        for i in range(negative_count):
             f = DirectoryWalker().get_a_file(directory='../data/face/processed/negative', filters=['.jpg'])
             image = cv2.imread(f.path, 1)
             image = ImageUtilities.preprocess(image)
@@ -53,31 +60,48 @@ def run(args):
             a[randomize[rindex], :, :, :] = image
             rindex += 1
 
-        print('train_data', train_data.shape)
         print('train_labels', train_labels.shape)
-        print('val_data', val_data.shape)
         print('val_labels', val_labels.shape)
+
+        onehot = np.zeros((len(train_labels), depth), dtype=np.float)
+        onehot[np.arange(len(train_labels)), train_labels] = 1.
+        train_labels = onehot
+
+        onehot = np.zeros((len(val_labels), depth), dtype=np.float)
+        onehot[np.arange(len(val_labels)), val_labels] = 1.
+        val_labels = onehot
+
+        print('train_data', train_data.shape)
+        print('train_labels, one-hot', train_labels.shape)
+        print('val_data', val_data.shape)
+        print('val_labels, one-hot', val_labels.shape)
+
+        try:
+            start_time = time.time()
+            # Evaluate the model and print results
+            eval_input_fn = tf.estimator.inputs.numpy_input_fn(
+                x={'x': val_data},
+                y=val_labels,
+                num_epochs=1,
+                shuffle=False)
+            eval_results = classifier.evaluate(input_fn=eval_input_fn)
+            print(eval_results)
+            duration = time.time() - start_time
+            print('duration', duration, 'per sample', duration/len(val_data))
+        except ValueError:
+            pass
 
         # Train the model
         train_input_fn = tf.estimator.inputs.numpy_input_fn(
             x={'x': train_data},
             y=train_labels,
-            batch_size=8,
+            batch_size=32,
             num_epochs=None,
             shuffle=True)
         classifier.train(
             input_fn=train_input_fn,
-            steps=256,
+            steps=4096,
             hooks=[logging_hook])
-
-        # Evaluate the model and print results
-        eval_input_fn = tf.estimator.inputs.numpy_input_fn(
-            x={'x': val_data},
-            y=val_labels,
-            num_epochs=1,
-            shuffle=False)
-        eval_results = classifier.evaluate(input_fn=eval_input_fn)
-        print(eval_results)
 
     #pp = pprint.PrettyPrinter(indent=4)
     #pp.pprint(layers)

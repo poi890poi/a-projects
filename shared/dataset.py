@@ -59,26 +59,26 @@ class SoF():
 
         file_prefix = '_'.join((sid, seq, gender, str(age), lighting, view, cropped, emotion, str(year), part))
         #print(anno)
-        return (
-            sid,
-            seq,
-            gender,
-            age,
-            lighting,
-            view, # 5
-            cropped,
-            emotion,
-            year,
-            part,
-            glasses, # 10
-            scarf,
-            points,
-            est_points,
-            rect,
-            g_rect, #15
-            illum_quality,
-            file_prefix, 
-        )
+        return {
+            'sid': sid,
+            'seq': seq,
+            'gender': gender,
+            'age': age,
+            'lighting': lighting,
+            'view': view, # 5
+            'cropped': cropped,
+            'emotion': emotion,
+            'year': year,
+            'part': part,
+            'glasses': glasses, # 10
+            'scarf': scarf,
+            'points': points,
+            'est_points': est_points,
+            'rect': rect,
+            'g_rect': g_rect, #15
+            'illum_quality': illum_quality,
+            'file_prefix': file_prefix, 
+        }
 
 class WikiImdb():
     @staticmethod

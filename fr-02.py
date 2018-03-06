@@ -19,6 +19,11 @@ if __name__== "__main__":
         default='../data/face/wiki-face/extracted/wiki/wiki.mat',
         help='Path to annotations.'
     )
+    parser.add_argument(
+        '--model',
+        type=str,
+        default='afanet',
+    )
     ARGS, unknown = parser.parse_known_args()
     if unknown:
         print(unknown)

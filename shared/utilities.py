@@ -15,11 +15,11 @@ import os, stat
 
 import random
 
-class TensorflowModel():
+"""class TensorflowModel():
     def __init__(self, model):
         self.model = model
 
-    def model_fn(self, features, labels, mode):
+    def model_fn(self, features, labels, mode, params=None):
         #input_layer = tf.reshape(features['x'], [-1, 64, 96, 3])
         input_layer = features['x']
 
@@ -28,6 +28,8 @@ class TensorflowModel():
             self.darknet19(input_layer, labels, mode)
         elif self.model=='afanet':
             self.afanet(input_layer, labels, mode)
+        elif self.model=='afanet7':
+            self.afanet7(input_layer, labels, mode)
         else:
             raise ValueError('Unrecognized model name')
 
@@ -45,7 +47,16 @@ class TensorflowModel():
             return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
 
         # Calculate Loss (for both TRAIN and EVAL modes)
-        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+        #loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+        #loss = tf.reduce_mean(tf.square(expected - net))
+        print('out_weights', params['out_weights'])
+        print('labels', labels)
+        print('logits', logits)
+        loss = tf.abs(labels - tf.cast(logits, tf.float64))*params['out_weights']
+        print('loss', loss)
+        loss = tf.reduce_mean(tf.abs(labels - tf.cast(logits, tf.float64))*params['out_weights'])
+        #loss = tf.reduce_mean(tf.abs(labels - tf.cast(logits, tf.float64)))
+        #loss = tf.losses.mean_squared_error(labels=labels, predictions=logits)
 
         # Configure the Training Op (for TRAIN mode)
         if mode == tf.estimator.ModeKeys.TRAIN:
@@ -57,15 +68,31 @@ class TensorflowModel():
 
         # Add evaluation metrics (for EVAL mode)
         eval_metric_ops = {
-            'accuracy': tf.metrics.accuracy(
-                labels=labels, predictions=predictions['classes'])}
+            'accuracy': tf.metrics.mean_squared_error(
+                labels=labels, predictions=tf.cast(logits, tf.float64))}
         return tf.estimator.EstimatorSpec(
             mode=mode, loss=loss, eval_metric_ops=eval_metric_ops)
 
-    def get_estimator(self):
+    def get_estimator(self, out_weights=None):
         # Create the Estimator
         return tf.estimator.Estimator(
-            model_fn=self.model_fn, model_dir='../models/'+self.model)
+            model_fn=self.model_fn, params={'out_weights': out_weights}, model_dir='../models/'+self.model)
+
+    def afanet7(self, input_layer, labels, mode):
+        self.layers.append(self.conv2d(input_layer, 32, kernel_size=[5, 5], strides=[2, 2], activation='leaky_relu'))
+        self.layers.append(self.pool2d(None))
+        self.layers.append(self.conv2d(None, 96, activation='leaky_relu'))
+        self.layers.append(self.pool2d(None))
+
+        self.layers.append(self.conv2d(None, 64, kernel_size=[1, 1], activation='leaky_relu'))
+        self.layers.append(self.conv2d(None, 128, activation='leaky_relu'))
+        self.layers.append(self.pool2d(None))
+
+        self.layers.append(self.conv2d(None, 100, kernel_size=[1, 1], activation='leaky_relu'))
+        self.layers.append(tf.reduce_mean(self.layers[-1], [1, 2], name='avg_pool'))
+        
+        for i, layer in enumerate(self.layers):
+            print(i, layer)
 
     def afanet(self, input_layer, labels, mode):
         self.layers.append(self.conv2d(input_layer, 32, kernel_size=[5, 5], strides=[2, 2], activation='leaky_relu'))
@@ -191,7 +218,7 @@ class TensorflowModel():
         if dropout>0:
             dense = tf.layers.dropout(
                 inputs=dense, rate=dropout, training=mode == tf.estimator.ModeKeys.TRAIN, name=name)
-        return dense
+        return dense"""
 
 class DataUtilities():
     @staticmethod

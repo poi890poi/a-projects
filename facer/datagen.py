@@ -30,7 +30,7 @@ def run(args):
         print()
         anno = dset.get_face(i*64)
         #print(anno)
-        filename = '_'.join((anno[17], 'e0_nl_o'))
+        filename = '_'.join((anno['file_prefix'], 'e0_nl_o'))
         filename = '.'.join((filename, 'jpg'))
         imgpath = os.path.normpath(os.path.join(topdir, filename))
         print(imgpath)
@@ -43,10 +43,15 @@ def run(args):
 
         rects, landmarks = FaceDetector().detect(gray)
         print('detected', rects, landmarks)
+        #print(anno)
 
         for rect in rects:
             (x, y, w, h) = ImageUtilities.rect_to_bb(rect, mrate=mrate)
             cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 255), 2)
+
+        print(anno['rect'])
+        (x, y, w, h) = anno['rect'].astype(dtype=np.int)
+        cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
         #'(\w{4})_(\d{5})_([mfMF])_(\d{2})(_([ioIO])_(fr|nf)_(cr|nc)_(no|hp|sd|sr)_(\d{4})_(\d)_(e0|en|em)_(nl|Gn|Gs|Ps)_([oemh]))*\.jpg'
         canvas = ViewportManager().open('preview', shape=img.shape, blocks=(1, 2))
