@@ -21,7 +21,12 @@ if __name__== "__main__":
     parser.add_argument(
         '--model',
         type=str,
-        default='darknet',
+        default='afanet11',
+    )
+    parser.add_argument(
+        '--subset',
+        type=str,
+        default='positive',
     )
     parser.add_argument(
         '--train_id',

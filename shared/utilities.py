@@ -126,8 +126,12 @@ class ImageUtilities():
         x += int(w_diff/2)
         h = int(h_new)
         w = int(w_new)
-        if x<bound[0] or y<bound[1] or x+w>=bound[2] or y+h>=bound[3]:
-            return (0, 0, 0, 0)
+        if x < bound[0] or y < bound[1] or x+w >= bound[2] or y+h >= bound[3]:
+            x = rect[0]
+            y = rect[1] - rect[2]//4
+            w = rect[2]
+            h = rect[3] + rect[2]//2
+            return (x, y, w, h)
         return (x, y, w, h)
 
     @staticmethod

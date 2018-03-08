@@ -26,7 +26,10 @@ def run(args):
     time_diff = time.time() - time_start
     print('tf.estimator created, dt:', time_diff)
 
-    data_dir = '../data/face/lfw/extracted/lfw'
+    if args.subset:
+        data_dir = '../data/face/demo/' + args.subset
+    else:
+        data_dir = '../data/face/demo'
     count = 256
     while count:
         time_start = time.time()
