@@ -1,9 +1,32 @@
 import tensorflow as tf
 import numpy as np
 
+class Cascade():
+    def __init__(self, params=None):
+        pass
+    
+    def net_12():
+        pass
+
+    def net_24():
+        pass
+
+    def net_48():
+        pass
+
 class SimpleClassifier():
-    def __init__(self, model):
+    def __init__(self, model, train_id, params=None):
         self.model = model
+        self.train_id = train_id
+
+        self.learn_rate = 0.001
+        if params and 'learn_rate' in params:
+            self.learn_rate = params['learn_rate']
+
+        self.layers = list()
+        self.estimator_train = None
+        self.estimator_eval = None
+        self.estimator_predict = None
 
     def model_fn(self, features, labels, mode, params=None):
         #input_layer = tf.reshape(features['x'], [-1, 64, 96, 3])
@@ -37,7 +60,8 @@ class SimpleClassifier():
             return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
 
         # Calculate Loss (for both TRAIN and EVAL modes)
-        #loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+        """
         #loss = tf.reduce_mean(tf.square(expected - net))
         print('out_weights', params['out_weights'])
         print('labels', labels)
@@ -46,11 +70,11 @@ class SimpleClassifier():
         print('loss', loss)
         loss = tf.reduce_mean(tf.abs(labels - tf.cast(logits, tf.float64))*params['out_weights'])
         #loss = tf.reduce_mean(tf.abs(labels - tf.cast(logits, tf.float64)))
-        #loss = tf.losses.mean_squared_error(labels=labels, predictions=logits)
+        #loss = tf.losses.mean_squared_error(labels=labels, predictions=logits)"""
 
         # Configure the Training Op (for TRAIN mode)
         if mode == tf.estimator.ModeKeys.TRAIN:
-            optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.001)
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learn_rate)
             train_op = optimizer.minimize(
                 loss=loss,
                 global_step=tf.train.get_global_step())
@@ -58,17 +82,20 @@ class SimpleClassifier():
 
         # Add evaluation metrics (for EVAL mode)
         eval_metric_ops = {
-            """'accuracy': tf.metrics.accuracy(
-                labels=labels, predictions=predictions['classes'])}"""
-            'accuracy': tf.metrics.mean_squared_error(
-                labels=labels, predictions=tf.cast(logits, tf.float64))}
+            'accuracy': tf.metrics.accuracy(
+                labels=labels, predictions=predictions['classes'])}
         return tf.estimator.EstimatorSpec(
             mode=mode, loss=loss, eval_metric_ops=eval_metric_ops)
 
-    def get_estimator(self, out_weights=None):
+    def get_estimator(self, out_weights=None, model_dir=''):
         # Create the Estimator
+        if model_dir=='':
+            if self.train_id:
+                model_dir = '../models/' + self.model + '_' + self.train_id
+            else:
+                model_dir = '../models/' + self.model
         return tf.estimator.Estimator(
-            model_fn=self.model_fn, params={'out_weights': out_weights}, model_dir='../models/'+self.model)
+            model_fn=self.model_fn, params={'out_weights': out_weights}, model_dir=model_dir)
 
     def afayolo(self, input_layer, labels, mode):
         """
@@ -120,7 +147,7 @@ class SimpleClassifier():
     def afanet11(self, input_layer, labels, mode):
         self.layers.append(self.conv2d(input_layer, 32, kernel_size=[5, 5], strides=[2, 2], activation='leaky_relu'))
         self.layers.append(self.pool2d(None))
-        self.layers.append(self.conv2d(None, 96, activation='leaky_relu'))
+        self.layers.append(self.conv2d(None, 64, activation='leaky_relu'))
         self.layers.append(self.pool2d(None))
 
         self.layers.append(self.conv2d(None, 32, kernel_size=[1, 1], activation='leaky_relu'))
@@ -131,19 +158,23 @@ class SimpleClassifier():
         self.layers.append(self.conv2d(None, 64, kernel_size=[1, 1], activation='leaky_relu'))
         self.layers.append(self.conv2d(None, 128, activation='leaky_relu'))
 
-        self.layers.append(self.conv2d(None, 5, kernel_size=[1, 1], activation='leaky_relu'))
+        self.layers.append(self.conv2d(None, 100, kernel_size=[1, 1], activation='leaky_relu'))
         self.layers.append(tf.reduce_mean(self.layers[-1], [1, 2], name='avg_pool'))
         
-        #for i, layer in enumerate(self.layers):
-        #    print(i, layer)
+        for i, layer in enumerate(self.layers):
+            print(i, layer)
 
     def darknet(self, input_layer, labels, mode):
         initial_filters = 16
-        for i in range(4):
-            self.layers.append(self.conv2d(input_layer, initial_filters, kernel_size=[3, 3], strides=[1, 1], activation='leaky_relu'))
+        self.layers.append(self.conv2d(input_layer, initial_filters, kernel_size=[3, 3], strides=[1, 1], activation='leaky_relu'))
+        self.layers.append(self.pool2d(None))
+        initial_filters *= 2
+        for i in range(3):
+            self.layers.append(self.conv2d(None, initial_filters, kernel_size=[3, 3], strides=[1, 1], activation='leaky_relu'))
             self.layers.append(self.pool2d(None))
             initial_filters *= 2
-        self.layers.append(self.conv2d(input_layer, initial_filters, kernel_size=[3, 3], strides=[1, 1], activation='leaky_relu'))
+        self.layers.append(self.conv2d(None, initial_filters, kernel_size=[3, 3], strides=[1, 1], activation='leaky_relu'))
+        self.layers.append(self.dropout(None, rate=0.5))
         self.layers.append(self.conv2d(None, 200, kernel_size=[1, 1], strides=[1, 1], activation='leaky_relu'))
         self.layers.append(tf.reduce_mean(self.layers[-1], [1, 2], name='avg_pool'))
         
@@ -241,6 +272,13 @@ class SimpleClassifier():
         if name=='':
             name = self.get_scope_name(len(self.layers), 'max')
         return tf.layers.max_pooling2d(inputs=inputs, pool_size=size, strides=strides, name=name)
+
+    def dropout(self, inputs, rate=0.5, name=''):
+        if inputs==None:
+            inputs = self.layers[-1]
+        dropout = tf.layers.dropout(
+            inputs=inputs, rate=rate, name=name)
+        return dropout
 
     def dense(self, inputs, units, activation='linear', dropout=-1, name=''):
         if inputs==None:

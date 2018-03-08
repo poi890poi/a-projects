@@ -1,7 +1,9 @@
 import cv2
+import numpy as np
 import dlib
+from scipy.misc import imresize
 
-from utilities import DataUtilities, ImageUtilities, DirectoryWalker, ViewportManager
+from shared.utilities import DataUtilities, ImageUtilities, DirectoryWalker, ViewportManager
 
 import os
 import cProfile, pstats
@@ -42,9 +44,51 @@ def display_top(snapshot, key_type='lineno', limit=10):
     total = sum(stat.size for stat in top_stats)
     print("Total allocated size: %.1f KiB" % (total / 1024))
 
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class FaceDetector(metaclass=Singleton):
+    def __init__(self):
+        self.detector = None
+        self.predictor = None
+
+    @staticmethod
+    def landmarks2coords(marks, dtype="int"):
+        # initialize the list of (x, y)-coordinates
+        coords = np.zeros((68, 2), dtype=dtype)
+    
+        # loop over the 68 facial landmarks and convert them
+        # to a 2-tuple of (x, y)-coordinates
+        for i in range(0, 68):
+            coords[i] = (marks.part(i).x, marks.part(i).y)
+    
+        # return the list of (x, y)-coordinates
+        return coords
+
+    def detect(self, img, request_landmarks=False):
+        if self.detector is None: self.detector = dlib.get_frontal_face_detector()
+        if self.predictor is None: self.predictor = dlib.shape_predictor('./face/pretrained/dlib/shape_predictor_68_face_landmarks.dat')
+
+        rects = self.detector(img, 1)
+        landmarks = list()
+
+        for (i, rect) in enumerate(rects):
+            if request_landmarks:
+                lm = self.predictor(img, rect)
+                lm = landmarks2coords(lm)
+                landmarks.append(lm)
+
+        return (rects, landmarks)
+
 def detect(inpath):
     image = cv2.imread(inpath, 1)
     gray = ImageUtilities.preprocess(image, convert_gray=cv2.COLOR_RGB2YCrCb, maxsize=640)
+    height, width, *rest = gray.shape
+    image = imresize(image, [height, width])
     memory_usage_psutil('Image loaded')
 
     canvas = ViewportManager().open('preview', shape=image.shape, blocks=(1, 1))
@@ -55,32 +99,42 @@ def detect(inpath):
     for (i, rect) in enumerate(rects):
         (x, y, w, h) = ImageUtilities.rect_to_bb(rect)
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+        landmarks = predictor(gray, rect)
+        landmarks = landmarks2coords(landmarks)
+        for (x, y) in landmarks:
+            cv2.circle(image, (x, y), 1, (0, 0, 255), -1)
  
     ViewportManager().put('preview', image, (0,0))
     ViewportManager().update('preview')
 
 
-memory_usage_psutil('Initial')
+def main():
+    memory_usage_psutil('Initial')
 
-detector = dlib.get_frontal_face_detector()
-predictor = dlib.shape_predictor('./pretrained/dlib/shape_predictor_68_face_landmarks.dat')
+    detector = dlib.get_frontal_face_detector()
+    predictor = dlib.shape_predictor('./face/pretrained/dlib/shape_predictor_68_face_landmarks.dat')
 
-memory_usage_psutil('SVM loaded')
+    memory_usage_psutil('SVM loaded')
 
-while True:
+    while True:
 
-    f = DirectoryWalker().get_a_file(directory='../../data/face/wiki-face/extracted/wiki', filters=['.jpg'])
-    if f is None:
-        print('No more sample T_T')
-        break
+        f = DirectoryWalker().get_a_file(directory='../data/face/wiki-face/extracted/wiki', filters=['.jpg'])
+        if f is None:
+            print('No more sample T_T')
+            break
 
-    cProfile.run('detect(f.path)', 'restats')
-    p = pstats.Stats('restats')
-    p.sort_stats('tottime')
-    print()
-    p.print_stats(10)
+        detect(f.path)
+        
+        continue
 
-    k = ViewportManager().wait_key()
-    if k in (ViewportManager.KEY_ENTER, ViewportManager.KEY_SPACE):
-        pass
+        cProfile.run('detect(f.path)', 'restats')
+        p = pstats.Stats('restats')
+        p.sort_stats('tottime')
+        print()
+        p.print_stats(10)
+
+        k = ViewportManager().wait_key()
+        if k in (ViewportManager.KEY_ENTER, ViewportManager.KEY_SPACE):
+            pass
 

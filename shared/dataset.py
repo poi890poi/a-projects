@@ -1,5 +1,8 @@
 import scipy.io as sio
+import numpy as np
 import datetime
+
+from random import shuffle
 
 class Singleton(type):
     _instances = {}
@@ -32,9 +35,17 @@ class SoF():
         self.filter_enum = ('nl', 'Gn', 'Gs', 'Ps')
         self.difficulty_enum = ('o', 'e', 'm', 'h')
         self.annotations = sio.loadmat(path)['metadata'][0]
+        np.random.shuffle(self.annotations)
+        print('Annotations loaded', len(self.annotations))
+
+    def shuffle(self):
+        np.random.shuffle(self.annotations)
 
     def get_face(self, index):
         #'(\w{4})_(\d{5})_([mfMF])_(\d{2})(_([ioIO])_(fr|nf)_(cr|nc)_(no|hp|sd|sr)_(\d{4})_(\d)_(e0|en|em)_(nl|Gn|Gs|Ps)_([oemh]))*\.jpg'
+        if index < 0 or index >=  len(self.annotations):
+            print('Face index out of range')
+            return None
         anno = self.annotations[index]
         sid = anno[0][0][0][0]
         seq = anno[1][0][0][0]

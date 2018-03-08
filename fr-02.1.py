@@ -1,7 +1,6 @@
-from facer.train import *
+from facer.predict import *
 
 def main():
-    print('do nothing...')
     run(ARGS)
 
 if __name__== "__main__":

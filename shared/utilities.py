@@ -11,221 +11,26 @@ import collections
 import os.path
 import sys, hashlib
 from uuid import uuid4
-import os, stat
+import os, stat, shutil
 
 import random
 
-"""class TensorflowModel():
-    def __init__(self, model):
-        self.model = model
-
-    def model_fn(self, features, labels, mode, params=None):
-        #input_layer = tf.reshape(features['x'], [-1, 64, 96, 3])
-        input_layer = features['x']
-
-        self.layers = list()
-        if self.model=='darknet19':
-            self.darknet19(input_layer, labels, mode)
-        elif self.model=='afanet':
-            self.afanet(input_layer, labels, mode)
-        elif self.model=='afanet7':
-            self.afanet7(input_layer, labels, mode)
-        else:
-            raise ValueError('Unrecognized model name')
-
-        logits = self.layers[-1]
-
-        predictions = {
-            # Generate predictions (for PREDICT and EVAL mode)
-            'classes': tf.argmax(input=logits, axis=1),
-            # Add `softmax_tensor` to the graph. It is used for PREDICT and by the
-            # `logging_hook`.
-            'probabilities': tf.nn.softmax(logits, name='softmax')
-        }
-
-        if mode == tf.estimator.ModeKeys.PREDICT:
-            return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
-
-        # Calculate Loss (for both TRAIN and EVAL modes)
-        #loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
-        #loss = tf.reduce_mean(tf.square(expected - net))
-        print('out_weights', params['out_weights'])
-        print('labels', labels)
-        print('logits', logits)
-        loss = tf.abs(labels - tf.cast(logits, tf.float64))*params['out_weights']
-        print('loss', loss)
-        loss = tf.reduce_mean(tf.abs(labels - tf.cast(logits, tf.float64))*params['out_weights'])
-        #loss = tf.reduce_mean(tf.abs(labels - tf.cast(logits, tf.float64)))
-        #loss = tf.losses.mean_squared_error(labels=labels, predictions=logits)
-
-        # Configure the Training Op (for TRAIN mode)
-        if mode == tf.estimator.ModeKeys.TRAIN:
-            optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.001)
-            train_op = optimizer.minimize(
-                loss=loss,
-                global_step=tf.train.get_global_step())
-            return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
-
-        # Add evaluation metrics (for EVAL mode)
-        eval_metric_ops = {
-            'accuracy': tf.metrics.mean_squared_error(
-                labels=labels, predictions=tf.cast(logits, tf.float64))}
-        return tf.estimator.EstimatorSpec(
-            mode=mode, loss=loss, eval_metric_ops=eval_metric_ops)
-
-    def get_estimator(self, out_weights=None):
-        # Create the Estimator
-        return tf.estimator.Estimator(
-            model_fn=self.model_fn, params={'out_weights': out_weights}, model_dir='../models/'+self.model)
-
-    def afanet7(self, input_layer, labels, mode):
-        self.layers.append(self.conv2d(input_layer, 32, kernel_size=[5, 5], strides=[2, 2], activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-        self.layers.append(self.conv2d(None, 96, activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-
-        self.layers.append(self.conv2d(None, 64, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 128, activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-
-        self.layers.append(self.conv2d(None, 100, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(tf.reduce_mean(self.layers[-1], [1, 2], name='avg_pool'))
-        
-        for i, layer in enumerate(self.layers):
-            print(i, layer)
-
-    def afanet(self, input_layer, labels, mode):
-        self.layers.append(self.conv2d(input_layer, 32, kernel_size=[5, 5], strides=[2, 2], activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-        self.layers.append(self.conv2d(None, 96, activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-
-        self.layers.append(self.conv2d(None, 32, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 64, activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 128, activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-
-        self.layers.append(self.conv2d(None, 64, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 128, activation='leaky_relu'))
-
-        self.layers.append(self.conv2d(None, 100, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(tf.reduce_mean(self.layers[-1], [1, 2], name='avg_pool'))
-        
-        #for i, layer in enumerate(self.layers):
-        #    print(i, layer)
-
-    def darknet19(self, input_layer, labels, mode):
-        '''
-         0 conv     64  7 x 7 / 2   224 x 224 x   3   ->   112 x 112 x  64
-         1 max          2 x 2 / 2   112 x 112 x  64   ->    56 x  56 x  64
-         2 conv    192  3 x 3 / 1    56 x  56 x  64   ->    56 x  56 x 192
-         3 max          2 x 2 / 2    56 x  56 x 192   ->    28 x  28 x 192
-         4 conv    128  1 x 1 / 1    28 x  28 x 192   ->    28 x  28 x 128
-         5 conv    256  3 x 3 / 1    28 x  28 x 128   ->    28 x  28 x 256
-         6 conv    256  1 x 1 / 1    28 x  28 x 256   ->    28 x  28 x 256
-         7 conv    512  3 x 3 / 1    28 x  28 x 256   ->    28 x  28 x 512
-         8 max          2 x 2 / 2    28 x  28 x 512   ->    14 x  14 x 512
-         9 conv    256  1 x 1 / 1    14 x  14 x 512   ->    14 x  14 x 256
-        10 conv    512  3 x 3 / 1    14 x  14 x 256   ->    14 x  14 x 512
-        11 conv    256  1 x 1 / 1    14 x  14 x 512   ->    14 x  14 x 256
-        12 conv    512  3 x 3 / 1    14 x  14 x 256   ->    14 x  14 x 512
-        13 conv    256  1 x 1 / 1    14 x  14 x 512   ->    14 x  14 x 256
-        14 conv    512  3 x 3 / 1    14 x  14 x 256   ->    14 x  14 x 512
-        15 conv    256  1 x 1 / 1    14 x  14 x 512   ->    14 x  14 x 256
-        16 conv    512  3 x 3 / 1    14 x  14 x 256   ->    14 x  14 x 512
-        17 conv    512  1 x 1 / 1    14 x  14 x 512   ->    14 x  14 x 512
-        18 conv   1024  3 x 3 / 1    14 x  14 x 512   ->    14 x  14 x1024
-        19 max          2 x 2 / 2    14 x  14 x1024   ->     7 x   7 x1024
-        20 conv    512  1 x 1 / 1     7 x   7 x1024   ->     7 x   7 x 512
-        21 conv   1024  3 x 3 / 1     7 x   7 x 512   ->     7 x   7 x1024
-        22 conv    512  1 x 1 / 1     7 x   7 x1024   ->     7 x   7 x 512
-        23 conv   1024  3 x 3 / 1     7 x   7 x 512   ->     7 x   7 x1024
-        24 conv   1000  1 x 1 / 1     7 x   7 x1024   ->     7 x   7 x1000
-        25 avg                        7 x   7 x1000   ->  1000
-        26 softmax                                        1000
-        27 cost                                           1000
-        '''
-
-        self.layers.append(self.conv2d(input_layer, 64, kernel_size=[7, 7], strides=[2, 2], activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-        self.layers.append(self.conv2d(None, 192, activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-
-        self.layers.append(self.conv2d(None, 128, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 256, activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 256, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 512, activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-
-        for i in range(4):
-            self.layers.append(self.conv2d(None, 256, kernel_size=[1, 1], activation='leaky_relu'))
-            self.layers.append(self.conv2d(None, 512, activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 512, kernel_size=[1, 1], activation='leaky_relu'))
-        self.layers.append(self.conv2d(None, 1024, activation='leaky_relu'))
-        self.layers.append(self.pool2d(None))
-
-        for i in range(2):
-            self.layers.append(self.conv2d(None, 512, kernel_size=[1, 1], activation='leaky_relu'))
-            self.layers.append(self.conv2d(None, 1024, activation='leaky_relu'))
-
-        self.layers.append(self.conv2d(None, 1000, kernel_size=[1, 1], activation='leaky_relu'))
-        print(self.layers[-1].shape)
-        #self.layers.append(tf.nn.avg_pool(self.layers[-1], [1, 1, 7, 7], [1, 1, 1, 1], padding='SAME', name='avg_pool'))
-        self.layers.append(tf.reduce_mean(self.layers[-1], [1, 2], name='avg_pool'))
-        
-        for i, layer in enumerate(self.layers):
-            print(i, layer)
-
-    def get_scope_name(self, index, suffix):
-        return str(index).zfill(2)+'.'+suffix
-    
-    def conv2d(self, input_layer, num_filters, kernel_size=[3, 3], strides=[1, 1], padding='same', activation='relu', normalize=True, name=''):
-        if input_layer==None:
-            input_layer = self.layers[-1]
-        if name=='':
-            name = self.get_scope_name(len(self.layers), 'conv')
-        act_func = tf.nn.relu
-        if activation=='leaky_relu':
-            act_func = tf.nn.leaky_relu
-        conv = tf.layers.conv2d(
-            inputs=input_layer,
-            filters=num_filters,
-            kernel_size=kernel_size,
-            strides=strides,
-            padding=padding,
-            activation=act_func,
-            name=name)
-        if normalize:
-            conv = tf.layers.batch_normalization(conv, name=name)
-        return conv
-
-    def pool2d(self, inputs, size=[2,2], strides=2, name=''):
-        if inputs==None:
-            inputs = self.layers[-1]
-        if name=='':
-            name = self.get_scope_name(len(self.layers), 'max')
-        return tf.layers.max_pooling2d(inputs=inputs, pool_size=size, strides=strides, name=name)
-
-    def dense(self, inputs, units, activation='linear', dropout=-1, name=''):
-        if inputs==None:
-            inputs = self.layers[-1]
-        if name=='':
-            name = self.get_scope_name(len(self.layers), 'dense')
-        act_func = None
-        print(inputs.get_shape()[-3:], np.prod(inputs.get_shape()[-3:]))
-        flatten = tf.reshape(inputs, [-1, np.prod(inputs.get_shape()[-3:])])
-        dense = tf.layers.dense(inputs=flatten, units=units, activation=act_func, name=name)
-        if dropout>0:
-            dense = tf.layers.dropout(
-                inputs=dense, rate=dropout, training=mode == tf.estimator.ModeKeys.TRAIN, name=name)
-        return dense"""
+def hash_str(text):
+    h = hashlib.new('ripemd160')
+    h.update(text.encode('utf-8'))
+    return h.hexdigest()
 
 class DataUtilities():
-    @staticmethod
-    def hash_str(text):
-        h = hashlib.new('ripemd160')
-        h.update(text.encode('utf-8'))
-        return h.hexdigest()
+
+    """def handleRemoveReadonly(func, path, exc):
+    excvalue = exc[1]
+    if func in (os.rmdir, os.remove) and excvalue.errno == errno.EACCES:
+        os.chmod(path, stat.S_IRWXU| stat.S_IRWXG| stat.S_IRWXO) # 0777
+        func(path)
+    else:
+        raise
+
+    shutil.rmtree(filename, ignore_errors=False, onerror=handleRemoveReadonly)"""
 
     @staticmethod
     def prepare_dir(head, trail='', create=True, empty=False):
@@ -234,9 +39,10 @@ class DataUtilities():
             print()
             print('Removing directory:', directory)
             tmp = DataUtilities.norm_join_path(head, hash_str(directory))
-            os.chmod(directory, stat.S_IWRITE)
+            #os.chmod(directory, stat.S_IWRITE)
             os.rename(directory, tmp)
-            os.removedirs(tmp)
+            #os.chmod(tmp, stat.S_IRWXU|stat.S_IRWXG|stat.S_IRWXO)
+            shutil.rmtree(tmp)
         if create and not os.path.exists(directory):
             os.makedirs(directory)
         return directory
@@ -249,6 +55,13 @@ class DataUtilities():
     def get_strider_len(matrix, window):
         height, width, *rest = matrix.shape
         return int((height-window[0]+1)*(width-window[1]+1))
+
+    @staticmethod
+    def save_dataset(data, labels, dir, epoch):
+        i = 0
+        for img in data:
+
+            i += 1
 
     @staticmethod
     def strider(matrix, window, stride=1):
@@ -286,7 +99,54 @@ class ImageUtilities():
         return np.copy(img[0:height, 0:width, :])
 
     @staticmethod
-    def preprocess(img, convert_gray=None, maxsize=512):
+    def rect_fit_ar(rect, bound, target_ar, mrate=1.0, crop=False):
+        # Default behavior is to contain original rectangle. Specify crop=True to crop instead.
+        x = rect[0]
+        y = rect[1]
+        w = rect[2]
+        h = rect[3]
+        ar = w/h
+        if ar >= target_ar: # Original rect too wide
+            if not crop:
+                h_new = w/target_ar
+                h_new *= mrate
+                w_new = w * mrate
+            else:
+                raise ValueError('crop behavior not implemented yet')
+        else: # Original rect too tall
+            if not crop:
+                w_new = h*target_ar
+                w_new *= mrate
+                h_new = h * mrate
+            else:
+                raise ValueError('crop behavior not implemented yet')
+        h_diff = h - h_new
+        y += int(h_diff/2)
+        w_diff = w - w_new
+        x += int(w_diff/2)
+        h = int(h_new)
+        w = int(w_new)
+        if x<bound[0] or y<bound[1] or x+w>=bound[2] or y+h>=bound[3]:
+            return (0, 0, 0, 0)
+        return (x, y, w, h)
+
+    @staticmethod
+    def rect_to_bb(rect, mrate=None):
+        x = rect.left()
+        y = rect.top()
+        w = rect.right() - x
+        h = rect.bottom() - y
+
+        if mrate is not None:
+            x = int(x/mrate[1])
+            y = int(y/mrate[0])
+            w = int(w/mrate[1])
+            h = int(h/mrate[0])
+    
+        return (x, y, w, h)
+
+    @staticmethod
+    def preprocess(img, convert_gray=None, equalize=True, denoise=True, maxsize=512):
         size = np.array(img.shape)
         r = 1.
         if size[0] > maxsize or size[1] > maxsize:
@@ -307,20 +167,22 @@ class ImageUtilities():
             height, width = img.shape
         
         # Denoise and equalize. Note 2018-02-09: Denoising benefits HAAR face detector significantly
-        if depth==1:
-            img = cv2.fastNlMeansDenoising(img)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            img  = clahe.apply(img)
-            #img = cv2.equalizeHist(img)
-        elif depth==3:
-            img = cv2.fastNlMeansDenoisingColored(img)
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-            channels = cv2.split(img)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            img[:, :, 0] = clahe.apply(channels[0])
-            img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
-        else:
-            raise TypeError('ImageProcessor::preprocess() expects image of 1 or 3 channels')
+        if equalize or denoise:
+            if depth==1:
+                if denoise: img = cv2.fastNlMeansDenoising(img)
+                if equalize: clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                img  = clahe.apply(img)
+                #img = cv2.equalizeHist(img)
+            elif depth==3:
+                if denoise: img = cv2.fastNlMeansDenoisingColored(img)
+                if equalize: 
+                    img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+                    channels = cv2.split(img)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                    img[:, :, 0] = clahe.apply(channels[0])
+                    img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
+            else:
+                raise TypeError('ImageProcessor::preprocess() expects image of 1 or 3 channels')
 
         return img
 
@@ -358,19 +220,33 @@ class ImageUtilities():
         return img
 
     @staticmethod
-    def rect_to_bb(rect, mrate=None):
-        x = rect.left()
-        y = rect.top()
-        w = rect.right() - x
-        h = rect.bottom() - y
+    def transform_crop(rect, image, r_intensity=1.0, p_intensity=1.0):
+        height, width, *rest = image.shape
+        (x, y, w, h) = rect
+        
+        theta = 15. * r_intensity # Default rotation +/- 15 degrees as described in paper by Yann LeCun
+        M = cv2.getRotationMatrix2D((x+w/2, y+h/2),
+            random.triangular(-theta, theta), 1)
 
-        if mrate is not None:
-            x = int(x/mrate[1])
-            y = int(y/mrate[0])
-            w = int(w/mrate[1])
-            h = int(h/mrate[0])
-    
-        return (x, y, w, h)
+        # Rotate
+        transformed = cv2.warpAffine(image, M, (width, height), borderMode=cv2.BORDER_REPLICATE)
+
+        # Perpective transformation
+        d = w * 0.2 * p_intensity
+        rect = np.array([
+            [x + random.triangular(-d, d), y + random.triangular(-d, d)],
+            [x + w + random.triangular(-d, d), y + random.triangular(-d, d)],
+            [x + w + random.triangular(-d, d), y + h + random.triangular(-d, d)],
+            [x + random.triangular(-d, d), y + h + random.triangular(-d, d)]], dtype = "float32")
+        dst = np.array([
+            [0, 0],
+            [w - 1, 0],
+            [w - 1, h - 1],
+            [0, h - 1]], dtype = "float32")
+        M = cv2.getPerspectiveTransform(rect, dst)
+        transformed = cv2.warpPerspective(transformed, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+
+        return transformed
 
 class Singleton(type):
     _instances = {}

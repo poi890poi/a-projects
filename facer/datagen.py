@@ -11,7 +11,6 @@ source_list = {
     'wiki': '../data/face/wiki-face/extracted/wiki/wiki.mat',
     'imdb': '../data/face/imdb-crop/extracted/imdb_crop/imdb.mat',
     'sof': '../data/face/sof/images/metadata.mat',
-
 }
 
 def run(args):
@@ -29,6 +28,8 @@ def run(args):
     for i in range(64):
         print()
         anno = dset.get_face(i*64)
+        if anno is None:
+            continue
         #print(anno)
         filename = '_'.join((anno['file_prefix'], 'e0_nl_o'))
         filename = '.'.join((filename, 'jpg'))
@@ -41,22 +42,35 @@ def run(args):
         processed_shape = gray.shape
         mrate = [processed_shape[0]/src_shape[0], processed_shape[1]/src_shape[1]]
 
+        """
         rects, landmarks = FaceDetector().detect(gray)
         print('detected', rects, landmarks)
         #print(anno)
-
         for rect in rects:
             (x, y, w, h) = ImageUtilities.rect_to_bb(rect, mrate=mrate)
-            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 255), 2)
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 255), 2)"""
 
-        print(anno['rect'])
+        print('annotations', anno['gender'], anno['age'], anno['glasses'], anno['scarf'], anno['rect'])
         (x, y, w, h) = anno['rect'].astype(dtype=np.int)
         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+        height, width, *rest = img.shape
+        (x, y, w, h) = ImageUtilities.rect_fit_ar(anno['rect'].astype(dtype=np.int), [0, 0, width, height], 2/3, mrate=1.25)
+        if w>0 and h>0:
+            cv2.rectangle(img, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        else:
+            print('expanded roi out of bound')
+            continue
+
+        #face = img[y:y+h, x:x+w, :]
+        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=1.0, p_intensity=0.)
+        face = imresize(face, [96, 64])
+        face = ImageUtilities.preprocess(face, convert_gray=None)
 
         #'(\w{4})_(\d{5})_([mfMF])_(\d{2})(_([ioIO])_(fr|nf)_(cr|nc)_(no|hp|sd|sr)_(\d{4})_(\d)_(e0|en|em)_(nl|Gn|Gs|Ps)_([oemh]))*\.jpg'
         canvas = ViewportManager().open('preview', shape=img.shape, blocks=(1, 2))
         ViewportManager().put('preview', img, (0, 0))
-        ViewportManager().put('preview', gray, (0, 1))
+        ViewportManager().put('preview', face, (0, 1))
         ViewportManager().update('preview')
 
         k = ViewportManager().wait_key()
