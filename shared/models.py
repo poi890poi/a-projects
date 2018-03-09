@@ -1,41 +1,6 @@
 import tensorflow as tf
 import numpy as np
 
-def fully_connected(input, size):
-    weights = tf.get_variable( 'weights', 
-        shape = [input.get_shape()[1], size],
-        initializer = tf.contrib.layers.xavier_initializer()
-      )
-    biases = tf.get_variable( 'biases',
-        shape = [size],
-        initializer = tf.constant_initializer(0.0)
-      )
-    return tf.matmul(input, weights) + biases
-
-def fully_connected_relu(input, size):
-    return tf.nn.relu(fully_connected(input, size))
-
-def conv_relu(input, kernel_size, depth, stride):
-    weights = tf.get_variable( 'weights', 
-        shape = [kernel_size, kernel_size, input.get_shape()[3], depth],
-        initializer = tf.contrib.layers.xavier_initializer()
-      )
-    biases = tf.get_variable( 'biases',
-        shape = [depth],
-        initializer = tf.constant_initializer(0.0)
-      )
-    conv = tf.nn.conv2d(input, weights,
-        strides = [1, stride, stride, 1], padding = 'SAME')
-    return tf.nn.relu(conv + biases)
-
-def pool(input, size):
-    return tf.nn.max_pool(
-        input, 
-        ksize = [1, size, size, 1], 
-        strides = [1, size, size, 1], 
-        padding = 'SAME'
-    )
-
 class Cascade():
     def __init__(self, params=None):
         pass
