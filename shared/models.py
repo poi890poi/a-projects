@@ -1,12 +1,77 @@
 import tensorflow as tf
 import numpy as np
 
+def fully_connected(input, size):
+    weights = tf.get_variable( 'weights', 
+        shape = [input.get_shape()[1], size],
+        initializer = tf.contrib.layers.xavier_initializer()
+      )
+    biases = tf.get_variable( 'biases',
+        shape = [size],
+        initializer = tf.constant_initializer(0.0)
+      )
+    return tf.matmul(input, weights) + biases
+
+def fully_connected_relu(input, size):
+    return tf.nn.relu(fully_connected(input, size))
+
+def conv_relu(input, kernel_size, depth, stride):
+    weights = tf.get_variable( 'weights', 
+        shape = [kernel_size, kernel_size, input.get_shape()[3], depth],
+        initializer = tf.contrib.layers.xavier_initializer()
+      )
+    biases = tf.get_variable( 'biases',
+        shape = [depth],
+        initializer = tf.constant_initializer(0.0)
+      )
+    conv = tf.nn.conv2d(input, weights,
+        strides = [1, stride, stride, 1], padding = 'SAME')
+    return tf.nn.relu(conv + biases)
+
+def pool(input, size):
+    return tf.nn.max_pool(
+        input, 
+        ksize = [1, size, size, 1], 
+        strides = [1, size, size, 1], 
+        padding = 'SAME'
+    )
+
 class Cascade():
     def __init__(self, params=None):
         pass
     
-    def net_12():
-        pass
+    def net_12(self, input, is_training):
+        # Input data.
+        tf_train_dataset = tf.placeholder(
+            tf.float32,
+            shape=(1, 12, 12, 3))
+
+        with tf.variable_scope('conv'):
+            conv1 = conv_relu(input, kernel_size = 3, depth = 16, stride = 1)
+            pool1 = pool(conv1, size = 2)
+            #pool1 = tf.cond(is_training, lambda: tf.nn.dropout(pool1, keep_prob = 0.5), lambda: pool1)
+
+        print(conv1)
+        print(pool1)
+        shape = pool1.get_shape().as_list()
+        pool1 = tf.reshape(pool1, [-1, shape[1] * shape[2] * shape[3]])
+        print(pool1)
+
+        #flattened = tf.concat(1, [pool1, pool2, pool3])
+        flattened = tf.concat([pool1,], 1)
+        print(flattened)
+
+        with tf.variable_scope('fc'):
+            fc = fully_connected_relu(flattened, size = 16)
+            print(fc)
+            if is_training:
+                fc = tf.nn.dropout(fc, keep_prob = 0.5)
+                print(fc)
+        with tf.variable_scope('out'):
+            logits = fully_connected(fc, size = 2)
+            print(logits)
+
+        return logits
 
     def net_24():
         pass
