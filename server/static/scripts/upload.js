@@ -9,6 +9,15 @@ var mUploadManager = function() {
     var qu = [];
     var media = [];
 
+    // This preview is not generalized and should not be here
+    var canvas = 0;
+
+    function round(n, precision=3) {
+        var d = Math.pow(10, precision);
+        console.log(d);
+        return Math.round(n*d)/d;
+    }
+
     function enqueueList(service, filelist, callback) {
         console.log(filelist);
         var files = filelist.get(0).files;
@@ -21,6 +30,11 @@ var mUploadManager = function() {
             } else {
                 tEnqueue = setTimeout(checkUpload, mEnqueueDelay);
             }
+        }
+
+        // This preview is not generalized and should not be here
+        if (canvas==0) {
+            canvas = acgraph.create('div-overlay');
         }
     }
 
@@ -92,10 +106,24 @@ var mUploadManager = function() {
 
                 // This preview is not generalized and should not be here
                 //media[quitem.rid] = base64data;
-                $('#img-sample').attr('src', base64data);
+                $('#div-summary').html('Waiting for sever response...');
+                canvas.remove();
+                canvas = acgraph.create('div-overlay');
+                var img = $('#img-sample');
+                img.one('load', function() {
+                    console.log('img load');
+                    var img = $('#img-sample');
+                    console.log('img', img.width(), img.height());
+                    var div = $('#div-overlay')
+                    console.log('div', div.width(), div.height());
+                    $('#div-overlay').width(img.width()).height(img.height());
+                    console.log('div set', div.width(), div.height());
+                });
+                img.attr('src', base64data);
 
                 base64data = base64data.split("base64,")[1];
                 console.log( ['onloadend', base64data.length]);
+                console.log('client_sent', performance.now());
                 var request = {
                     "requests": [
                         {
@@ -115,7 +143,7 @@ var mUploadManager = function() {
                         }
                     ],
                     "timing": {
-                        "client_sent": d.getTime()
+                        "client_sent": performance.now()
                     }
                 };
                 var postdata = JSON.stringify(request);
@@ -133,11 +161,54 @@ var mUploadManager = function() {
                         console.log('ajax_success');
                         //var json_obj = JSON.parse(responses);
                         var json_obj = responses;
+                        json_obj['timing']['client_rcv'] = performance.now();
+                        console.log('client_rcv', performance.now());
+
+                        // This preview is not generalized and should not be here
+                        //overlay.remove();
                         for (var i=0; i<json_obj['requests'].length; i++) {
                             var request = json_obj['requests'][i];
-                            console.log(request['requestId'], request)
+                            var services = request['services'];
+                            for (var j=0; j<services.length; j++) {
+                                var service = services[i];
+                                var results = service['results'];
+                                var rects = results['rects'];
+                                var predictions = results['predictions'];
+                                var timing = results['timing'];
+                                for (var k=0; k<rects.length; k++) {
+                                    var rect = rects[k];
+                                    var p = predictions[k];
+                                    if (p[1]>p[0]) {
+                                        /*var t = acgraph.text(rect[0], rect[1]-15);
+                                        t.parent(canvas);
+                                        t.style({fontSize: '12px', color: 'lime'});
+                                        console.log(p[1]);
+                                        var confidence = Math.round(p[1]*100)/100;
+                                        t.text(confidence);*/
+                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
+                                    } else {
+                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('red', 2);
+                                    }
+                                }
+                                console.log(json_obj['timing']);
+                                console.log(timing);
+                                var t_server = json_obj['timing']['server_sent']-json_obj['timing']['server_rcv'];
+                                var t_total = json_obj['timing']['client_rcv']-json_obj['timing']['client_sent'];
+                                var t_transmission = t_total-t_server;
+                                console.log(t_server, t_transmission);
+                                $('#div-summary').html(
+                                    'Faces detected: '+rects.length+'<br/>'+
+                                    'Total response time: '+round(t_total)+' ms<br/>'+
+                                    'Transmission and client time: '+round(t_transmission)+' ms<br/>'+
+                                    'Total server time: '+round(t_server)+' ms<br/>'+
+                                    'Image processing time (server): '+round(timing['preprocess'])+' ms<br/>'+
+                                    'HOG+SVM detection time (server): '+round(timing['detect'])+' ms<br/>'+
+                                    'CNN classification time (server): '+round(timing['cnn'])+' ms<br/>'
+                                );
+                            }
                             //$('#img-sample').attr('src', 'data:image/jpg;base64,'+media[request['requestId']]);
                         }
+
                     }
                 } );
             }

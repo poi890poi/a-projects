@@ -476,7 +476,7 @@ class FaceClassifier(metaclass=Singleton):
             src_shape = img.shape
             
             time_start = time.time()
-            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False, maxsize=192)
+            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False, maxsize=384)
             time_diff = time.time() - time_start
             timing['preprocess'] = time_diff*1000
             #print('preprocess', time_diff)
@@ -501,7 +501,7 @@ class FaceClassifier(metaclass=Singleton):
                 if w>0 and h>0:
                     face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
                     face = imresize(face, shape_raw[0:2])
-                    face = ImageUtilities.preprocess(face, convert_gray=None)
+                    #face = ImageUtilities.preprocess(face, convert_gray=None)
                 if face is not None:
                     facelist.append(face)
                     rects_.append([x, y, w, h])

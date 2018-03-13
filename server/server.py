@@ -235,7 +235,7 @@ def make_app():
         (r"/", MainHandler),
     ])
 
-def server_start(args, port=8888):
+def server_start(args, port=9000):
     print('Serving tornado server on port', port)
     app = make_app()
     app.listen(port)
