@@ -1,6 +1,7 @@
 from facer.train import *
 from facer.datagen import *
 from facer.predict import *
+from server.server import *
 
 def main():
     if ARGS.test=='train':
@@ -9,6 +10,8 @@ def main():
         gen(ARGS)
     elif ARGS.test=='predict':
         predict(ARGS)
+    elif ARGS.test=='server':
+        server_start(ARGS)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+    <head></head>
+    <style>
+        body {
+            font-family: "Helvetica";
+            line-height: 1.6;
+            font-stretch: expanded;
+        }
+        img.thumbnail {
+            width: 64px;
+            height: 64px;
+        }
+        img.error {
+            width: 32px;
+            height: 32px;
+        }
+        div.main_panel {
+            max-width: 800px;
+        }
+        div.model_view {
+            overflow: auto;
+            max-width: 95%;
+            max-height: 480px;
+        }
+        #img-model {
+            max-width: 90%;
+        }
+        #div-tooltip {
+            display: none;
+            position: absolute;
+        }
+    </style>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+    <script src="../static/scripts/upload.js"></script>
+    <script>
+        $( document ).ready(function() {
+            $('img.error').hover( function(e) {
+                    var predict = $(this).attr('data-predict').split(",");
+                    var img = $($('#div-classes .thumbnail').get(parseInt(predict[0])));
+                    var src = img.attr("src");
+                    $('#img-incorrect').attr("src", src);
+                    var img = $($('#div-classes .thumbnail').get(parseInt(predict[1])));
+                    var src = img.attr("src");
+                    $('#img-correct').attr("src", src);
+                    $('#div-tooltip').css({left:e.pageX+16, top:e.pageY+16}).show();
+                }
+            );
+
+            $('#div-errors').mouseout( function(e) {
+                    $('#div-tooltip').hide();
+                }
+            );
+
+            $('#file_upload').change( function (e) {
+                    mUploadManager.enqueueList({type: 'face', model: '12-net', endpoint: '../predict'}, $(this), function (status, response) {
+                        if (status==mUploadManager.STATUS.Error) {
+                            if (response.code==mUploadManager.ERROR.NotAFile) {
+                                console.log('mUploadManager: Not a file');
+                            } else if (response.code==mUploadManager.ERROR.InvalidType) {
+                                console.log('mUploadManager: Unaccepted file type ' + response.fobj.type);
+                            } else {
+                                console.log('mUploadManager: Unhandled exception');
+                                console.log(response);
+                            }
+                        } else {
+                        }
+                    });
+                }
+            );
+        });
+    </script>
+    <body>
+        <div id="div-tooltip" style="background-color: gray; padding: 8px;">
+            predict / truth<br/>
+            <img id="img-incorrect" class="thumbnail" src=""></img>
+            <img id="img-correct" class="thumbnail" src=""></img>
+        </div>
+        <div class="main_panel">
+            <h2>Arobot Computer Vision Services</h2>
+
+            <h3>Face Detection and Classification</h3>
+                <form id="form_upload" action="$action" enctype="multipart/form-data" method="post">
+                    Upload files...
+                    <input type="hidden" name="MAX_FILE_SIZE" value="30000" />
+                    <input type="file" id="file_upload" name="upload" multiple="multiple"><br/>
+                </form>
+
+                <div id="div-results">
+                    <img id="img-sample"></img>
+                </div>
+            <!--
+            <h3>Method</h3>
+            <ul>
+                <li>Preprocess of images
+                    <ul>
+                        <li>Discard color (cv2.COLOR_RGB2GRAY)</li>
+                        <li>Apply histogram equalization</li>
+                        <li>Apply CLAHE, contrast limited adaptive histogram equalization</li>
+                        <li>Flip to expand dataset</li>
+                    </ul>
+                </li>
+                <li>Mutation
+                    <ul>
+                        <li>Rotation: ±15 degrees</li>
+                        <li>Perspective transformation: ±20% of dimension on all 4 corners</li>
+                    </ul>
+                </li>
+                <li>Training flow
+                    <ul>
+                        <li>Balanced data: Feed with same amount of samples in each class</li>
+                        <li>Fine-tuning: Reduce learn rate (from 0.02 to 0.0001) and sample mutation intensity (from 1.0 to 0.75) after initial training</li>
+                        <li>Use separate set for validation</li>
+                        <li>Early stop if validation loss does not improve in 16 epochs</li>
+                        <li>Save weights only when validation accuracy improves</li>
+                    </ul>
+                </li>
+            </ul>
+            -->
+
+            <br/><br/><br/><br/>
+
+        </div>
+    </body>
+</html>

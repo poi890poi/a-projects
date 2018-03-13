@@ -7,6 +7,9 @@ import os.path
 import pprint
 import time
 
+import threading
+import base64
+
 import cv2
 import numpy as np
 import tensorflow as tf
@@ -287,9 +290,15 @@ def predict(args):
         forward_time += time_diff
         forward_count += len(val_data)
 
+        print('val_data', val_data.shape, val_data.dtype)
+        reshaped = val_data.reshape((-1,)+shape_flat)
+        print('reshaped', reshaped.shape, reshaped.dtype)
+        print('preprocess for cnn', time_diff)
+
         # Predict with only one sample to get call overhead
         time_start = time.time()
         feed_dict_one = {x: val_data[0:1].reshape((-1,)+shape_flat)}
+        print('feed_dict', feed_dict_one)
         p_one = sess.run(y, feed_dict_one)
         time_diff_one = time.time() - time_start
         call_time += time_diff - ((time_diff - time_diff_one) + (time_diff-time_diff_one)/(len(val_data)-1))
@@ -330,3 +339,189 @@ def predict(args):
     print('overhead:', call_time*100/call_count, 'ms per 100 call')
     print('precision:', stats_correct/stats_total)
     print('recall:', stats_positive_true/stats_positive)
+
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class FaceClassifier(metaclass=Singleton):
+    def init(self, model_dir):
+        print('Restoring TF model...', model_dir)
+        try:
+            print(self.sess, threading.current_thread().ident)
+            return
+        except AttributeError:
+            pass # Continue intializing...
+
+        self.sess = tf.InteractiveSession()
+    
+        with tf.name_scope('input'):
+            self.x = tf.placeholder(tf.float32, [None, np.prod(shape_raw)], name='train_data')
+            y_ = tf.placeholder(tf.float32, [None, n_class], name='labels')
+        with tf.name_scope('input_reshape'):
+            image_shaped_input = tf.reshape(self.x, (-1,)+shape_raw)
+            tf.summary.image('input', image_shaped_input, data_size)
+
+        def fully_connected(input, size):
+            weights = tf.get_variable( 'weights', 
+                shape = [input.get_shape()[1], size],
+                initializer = tf.contrib.layers.xavier_initializer()
+            )
+            biases = tf.get_variable( 'biases',
+                shape = [size],
+                initializer = tf.constant_initializer(0.0)
+            )
+            return tf.matmul(input, weights) + biases
+
+        def fully_connected_relu(input, size):
+            return tf.nn.relu(fully_connected(input, size))
+
+        def conv_relu(input, kernel_size, depth):
+            weights = tf.get_variable( 'weights', 
+                shape = [kernel_size, kernel_size, input.get_shape()[3], depth],
+                initializer = tf.contrib.layers.xavier_initializer()
+            )
+            biases = tf.get_variable( 'biases',
+                shape = [depth],
+                initializer = tf.constant_initializer(0.0)
+            )
+            conv = tf.nn.conv2d(input, weights,
+                strides = [1, 1, 1, 1], padding = 'SAME')
+            return tf.nn.relu(conv + biases)
+
+        def pool(input, size, stride):
+            return tf.nn.max_pool(
+                input, 
+                ksize = [1, size, size, 1], 
+                strides = [1, stride, stride, 1], 
+                padding = 'SAME'
+            )
+
+        with tf.variable_scope('12-net'):
+            input_12 = tf.image.resize_bilinear(image_shaped_input, (12, 12))
+            # Convolutions
+            with tf.variable_scope('conv1'):
+                conv12_1 = conv_relu(input_12, kernel_size=3, depth=16)
+                pool12_1 = pool(conv12_1, size=3, stride=2)
+            shape = pool12_1.get_shape().as_list()
+            flatten12 = tf.reshape(pool12_1, [-1, shape[1] * shape[2] * shape[3]])
+            with tf.variable_scope('fc1'):
+                fc12_1 = fully_connected_relu(flatten12, size=16)
+                fc_final = fc12_1
+
+        """with tf.variable_scope('24-net'):
+            input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
+            # Convolutions
+            with tf.variable_scope('conv1'):
+                conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
+                pool24_1 = pool(conv24_1, size=3, stride=2)
+            shape = pool24_1.get_shape().as_list()
+            flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
+            print('net-24 flatten', flatten24)
+            with tf.variable_scope('fc1'):
+                fc24_1 = fully_connected_relu(flatten24, size=128)
+            
+            fc24_concat = tf.concat([fc24_1, fc12_1], 1)
+            print('net-24 fc', fc24_1)
+            print('net-24 concat', fc24_concat)
+
+        with tf.variable_scope('48-net'):
+            # Convolutions
+            with tf.variable_scope('conv1'):
+                conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
+                pool48_1 = pool(conv48_1, size=3, stride=2)
+                # Normalize, region=9
+            with tf.variable_scope('conv2'):
+                conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
+                # Normalize, region=9
+                pool48_2 = pool(conv48_2, size=3, stride=2)
+            shape = pool48_2.get_shape().as_list()
+            flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
+            with tf.variable_scope('fc1'):
+                fc48_1 = fully_connected_relu(flatten48, size=256)
+            
+            fc48_concat = tf.concat([fc48_1, fc24_concat], 1)
+            print('net-48 concat', fc48_concat)"""
+
+        with tf.variable_scope('out'):
+            self.y = fully_connected(fc_final, size=n_class)
+
+        # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
+        #tf.global_variables_initializer().run()
+
+        self.y = tf.nn.softmax(self.y)
+
+        # Add ops to save and restore all the variables.
+        self.saver = tf.train.Saver(filename=model_dir+'/model.ckpt')
+
+        # Restore variables from disk.
+        time_start = time.time()
+        self.saver.restore(self.sess, model_dir+'/model.ckpt')
+        time_diff = time.time() - time_start
+        print('Model restored.', time_diff)
+
+    def detect(self, media):
+        timing = dict()
+        #print(media)
+        img = None
+        if 'content' in media:
+            bindata = base64.b64decode(media['content'].encode())
+            img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
+
+        if img is not None:
+            #print(img.shape)
+            src_shape = img.shape
+            
+            time_start = time.time()
+            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False, maxsize=192)
+            time_diff = time.time() - time_start
+            timing['preprocess'] = time_diff*1000
+            #print('preprocess', time_diff)
+
+            processed_shape = gray.shape
+            mrate = [processed_shape[0]/src_shape[0], processed_shape[1]/src_shape[1]]
+
+            time_start = time.time()
+            rects, landmarks = FaceDetector().detect(gray)
+            time_diff = time.time() - time_start
+            timing['detect'] = time_diff*1000
+            #print('hog+svm detect', time_diff)
+
+            time_start = time.time()
+            facelist = list()
+            rects_ = list()
+            for rect in rects:
+                face = None
+                (x, y, w, h) = ImageUtilities.rect_to_bb(rect, mrate=mrate)
+                height, width, *rest = img.shape
+                (x, y, w, h) = ImageUtilities.rect_fit_ar([x, y, w, h], [0, 0, width, height], 1., mrate=1.)
+                if w>0 and h>0:
+                    face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+                    face = imresize(face, shape_raw[0:2])
+                    face = ImageUtilities.preprocess(face, convert_gray=None)
+                if face is not None:
+                    facelist.append(face)
+                    rects_.append([x, y, w, h])
+            val_data = np.array(facelist, dtype=np.float32)/255
+            reshaped = val_data.reshape((-1,)+shape_flat)
+            time_diff = time.time() - time_start
+            timing['crop'] = time_diff*1000
+            #print('prepare data for cnn', time_diff)
+
+            time_start = time.time()
+            feed_dict = {self.x: val_data.reshape((-1,)+shape_flat)}
+            predictions = self.sess.run(self.y, feed_dict)
+            time_diff = time.time() - time_start
+            timing['cnn'] = time_diff*1000
+            #print('cnn classify', time_diff, len(facelist))
+            #print('predictions', predictions)
+
+            predictions_ = list()
+            for p in predictions:
+                predictions_.append(p.tolist())
+
+            return (rects_, predictions_, timing)
+            
