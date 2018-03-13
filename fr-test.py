@@ -1,17 +1,28 @@
 from facer.train import *
+from facer.datagen import *
+from facer.predict import *
 
 def main():
     if ARGS.test=='train':
         train(ARGS)
+    elif ARGS.test=='gen':
+        gen(ARGS)
+    elif ARGS.test=='predict':
+        predict(ARGS)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
-        Test units for face recognition""")
+        Test units for face applications""")
     parser.add_argument(
         '--test',
         type=str,
         default='',
         help='Name of the test unit to run.'
+    )
+    parser.add_argument(
+        '--preview',
+        action='store_true',
+        help='Display window and wait for user input, for preview.'
     )
     parser.add_argument(
         '--source_dir',

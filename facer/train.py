@@ -6,6 +6,7 @@ from face.dlibdetect import FaceDetector
 import os.path
 import pprint
 import time
+from random import shuffle
 
 import cv2
 import numpy as np
@@ -15,18 +16,54 @@ shape_raw = (48, 48, 3)
 shape_flat = (np.prod(shape_raw),)
 shape_image = (12, 12, 3)
 n_class = 2
-batch_size = 80
-epochs = 100
-steps = 200
+batch_size = 120
+epochs = 20
+steps = 2000
 learn_rate = 0.0005
 
-def get_data():
+filelist = {
+    'init': True,
+    'positive': list(),
+    'negative': list(),
+    'pointer': {'positive': 0, 'negative': 0},
+}
+
+def prepare_data():
+    if filelist['init']:
+        while True:
+            f = DirectoryWalker().get_a_file(directory='../data/face/train/positive', filters=['.jpg'])
+            if f and f.path:
+                print(f.path)
+                filelist['positive'].append(f.path)
+            else:
+                print('positive samples listed', len(filelist['positive']))
+                break
+        shuffle(filelist['positive'])
+        while True:
+            f = DirectoryWalker().get_a_file(directory='../data/face/train/negative', filters=['.jpg'])
+            if f and f.path:
+                print(f.path)
+                filelist['negative'].append(f.path)
+            else:
+                print('negative samples listed', len(filelist['negative']))
+                break
+        shuffle(filelist['negative'])
+        filelist['init'] = False
+
+    def get_a_file(set):
+        if filelist['pointer'][set] >= len(filelist[set]):
+            filelist['pointer'][set] = 0
+            shuffle(filelist[set])
+        index = filelist['pointer'][set]
+        filelist['pointer'][set] += 1
+        return filelist[set][index]
+
     # Hyperparameters
     prep_denoise = False
     prep_equalize = False
 
     train_count = batch_size
-    val_count = batch_size
+    val_count = batch_size//4
     total_count = train_count + val_count
 
     train_positive_count = train_count//2
@@ -49,28 +86,15 @@ def get_data():
     val_labels = b[train_count:total_count, :]
 
     # Load positive data from dataset
-    data_dir = '../data/face/sof/images'
-    dset = SoF()
-    dset.load_annotations('../data/face/sof/images/metadata.mat', 'sof')
     count = positive_count
-    face_index = 0
+    print('loading positive samples', count)
     while count:
-        anno = dset.get_face(face_index)
-        face_index += 1
-        if anno is None:
-            face_index = 0
-            continue
-        #print(anno)
-        filename = '_'.join((anno['file_prefix'], 'e0_nl_o'))
-        filename = '.'.join((filename, 'jpg'))
-        imgpath = os.path.normpath(os.path.join(data_dir, filename))
-
+        imgpath = get_a_file('positive')
         img = cv2.imread(imgpath, 1)
         if img is None:
             continue
-        src_shape = img.shape
         height, width, *rest = img.shape
-        (x, y, w, h) = ImageUtilities.rect_fit_ar(anno['rect'].astype(dtype=np.int), [0, 0, width, height], 1, mrate=1.)
+        (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
         if w>0 and h>0:
             pass
         else:
@@ -94,9 +118,10 @@ def get_data():
 
     # Load negative data
     count = negative_count
+    print('loading negative samples', count)
     while count:
-        f = DirectoryWalker().get_a_file(directory='../data/face/processed/negative', filters=['.jpg'])
-        img = cv2.imread(f.path, 1)
+        imgpath = get_a_file('negative')
+        img = cv2.imread(imgpath, 1)
         height, width, *rest = img.shape
         crop = (height - width)//2
         img = img[crop:crop+width, :, :]
@@ -173,6 +198,8 @@ def train(args):
             shape = [depth],
             initializer = tf.constant_initializer(0.0)
         )
+        print(weights.name)
+        print(biases.name)
         variable_summaries(weights)
         variable_summaries(biases)
         conv = tf.nn.conv2d(input, weights,
@@ -187,69 +214,58 @@ def train(args):
             padding = 'SAME'
         )
 
-    # 12-net
-    input_12 = tf.image.resize_bilinear(image_shaped_input, (12, 12))
-    # Convolutions
-    with tf.variable_scope('n12.conv1'):
-        conv12_1 = conv_relu(input_12, kernel_size=3, depth=16)
-        pool12_1 = pool(conv12_1, size=3, stride=2)
-    shape = pool12_1.get_shape().as_list()
-    flatten12 = tf.reshape(pool12_1, [-1, shape[1] * shape[2] * shape[3]])
-    with tf.variable_scope('n12.fc1'):
-        fc12_1 = fully_connected_relu(flatten12, size=16)
-        print('net-12 fc', fc12_1)
-    """with tf.name_scope('dropout'):
+    with tf.variable_scope('12-net'):
+        input_12 = tf.image.resize_bilinear(image_shaped_input, (12, 12))
+        # Convolutions
+        with tf.variable_scope('conv1'):
+            conv12_1 = conv_relu(input_12, kernel_size=3, depth=16)
+            pool12_1 = pool(conv12_1, size=3, stride=2)
+            print(conv12_1.name)
+            print(pool12_1.name)
+        shape = pool12_1.get_shape().as_list()
+        flatten12 = tf.reshape(pool12_1, [-1, shape[1] * shape[2] * shape[3]])
+        with tf.variable_scope('fc1'):
+            fc12_1 = fully_connected_relu(flatten12, size=16)
+            fc_final = fc12_1
+
+    """with tf.variable_scope('24-net'):
+        input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
+        # Convolutions
+        with tf.variable_scope('conv1'):
+            conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
+            pool24_1 = pool(conv24_1, size=3, stride=2)
+        shape = pool24_1.get_shape().as_list()
+        flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
+        print('net-24 flatten', flatten24)
+        with tf.variable_scope('fc1'):
+            fc24_1 = fully_connected_relu(flatten24, size=128)
+        
+        fc24_concat = tf.concat([fc24_1, fc12_1], 1)
+        print('net-24 fc', fc24_1)
+        print('net-24 concat', fc24_concat)
+
+    with tf.variable_scope('48-net'):
+        # Convolutions
+        with tf.variable_scope('conv1'):
+            conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
+            pool48_1 = pool(conv48_1, size=3, stride=2)
+            # Normalize, region=9
+        with tf.variable_scope('conv2'):
+            conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
+            # Normalize, region=9
+            pool48_2 = pool(conv48_2, size=3, stride=2)
+        shape = pool48_2.get_shape().as_list()
+        flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
+        with tf.variable_scope('fc1'):
+            fc48_1 = fully_connected_relu(flatten48, size=256)
+        
+        fc48_concat = tf.concat([fc48_1, fc24_concat], 1)
+        print('net-48 concat', fc48_concat)"""
+
+    with tf.variable_scope('dropout'):
         keep_prob = tf.placeholder(tf.float32)
         tf.summary.scalar('dropout_keep_probability', keep_prob)
-        dropped = tf.nn.dropout(fc1, keep_prob)
-    with tf.variable_scope('out'):
-        y = fully_connected(dropped, size=n_class)"""
-
-    # 24-net
-    input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
-    # Convolutions
-    with tf.variable_scope('n24.conv1'):
-        conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
-        pool24_1 = pool(conv24_1, size=3, stride=2)
-    shape = pool24_1.get_shape().as_list()
-    flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
-    print('net-24 flatten', flatten24)
-    with tf.variable_scope('n24.fc1'):
-        fc24_1 = fully_connected_relu(flatten24, size=128)
-    
-    fc24_concat = tf.concat([fc24_1, fc12_1], 1)
-    print('net-24 fc', fc24_1)
-    print('net-24 concat', fc24_concat)
-
-    """with tf.name_scope('dropout'):
-        keep_prob = tf.placeholder(tf.float32)
-        tf.summary.scalar('dropout_keep_probability', keep_prob)
-        dropped = tf.nn.dropout(fc24_concat, keep_prob)
-    with tf.variable_scope('out'):
-        y = fully_connected(dropped, size=n_class)"""
-
-    # 48-net
-    # Convolutions
-    with tf.variable_scope('n48.conv1'):
-        conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
-        pool48_1 = pool(conv48_1, size=3, stride=2)
-        # Normalize, region=9
-    with tf.variable_scope('n48.conv2'):
-        conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
-        # Normalize, region=9
-        pool48_2 = pool(conv48_2, size=3, stride=2)
-    shape = pool48_2.get_shape().as_list()
-    flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
-    with tf.variable_scope('n48.fc1'):
-        fc48_1 = fully_connected_relu(flatten48, size=256)
-    
-    fc48_concat = tf.concat([fc48_1, fc24_concat], 1)
-    print('net-48 concat', fc48_concat)
-
-    with tf.name_scope('dropout'):
-        keep_prob = tf.placeholder(tf.float32)
-        tf.summary.scalar('dropout_keep_probability', keep_prob)
-        dropped = tf.nn.dropout(fc48_concat, keep_prob)
+        dropped = tf.nn.dropout(fc_final, keep_prob)
     with tf.variable_scope('out'):
         y = fully_connected(dropped, size=n_class)
 
@@ -289,7 +305,9 @@ def train(args):
     # Train the model, and also write summaries.
     # Every 10th step, measure test-set accuracy, and write test summaries
     # All other steps, run train_step on training data, & add training summaries
-    train_data, train_labels, val_data, val_labels = get_data()
+    train_data, train_labels, val_data, val_labels = prepare_data()
+    dataset_train = tf.data.Dataset.from_tensor_slices((train_data, train_labels))
+    dataset_test = tf.data.Dataset.from_tensor_slices((val_data, val_labels))
 
     def feed_dict(train):
         """Make a TensorFlow feed_dict: maps data onto Tensor placeholders."""
@@ -303,8 +321,12 @@ def train(args):
             k = 1.0
         return {x: xs, y_: ys, keep_prob: k}
 
+    # Add ops to save and restore all the variables.
+    saver = tf.train.Saver()
+
     forward_time = 0
     forward_count = 0
+    acc_best = -1
     for i in range(epochs*steps):
         if i % 10 == 0:  # Record summaries and test-set accuracy
             time_start = time.time()
@@ -313,6 +335,15 @@ def train(args):
             forward_time += time_diff
             forward_count += len(val_data)
             test_writer.add_summary(summary, i)
+
+            try:
+                if acc >= acc_best:
+                    save_path = saver.save(sess, '../models/cascade/model.ckpt')
+                    print('Model saved in path: %s' % save_path)
+                    acc_best = acc
+            except:
+                pass
+
             print('Accuracy at step %s: %s, time/sample: %s' % (i, acc, forward_time/forward_count))
         else:  # Record train set summaries, and train
             if i % 100 == 99:  # Record execution stats
@@ -331,7 +362,7 @@ def train(args):
             if i % steps == steps-1:
                 print('Get new data')
                 print()
-                train_data, train_labels, val_data, val_labels = get_data()
+                train_data, train_labels, val_data, val_labels = prepare_data()
     train_writer.close()
     test_writer.close()
 

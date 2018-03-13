@@ -119,14 +119,15 @@ class ImageUtilities():
                 w_new *= mrate
                 h_new = h * mrate
             else:
-                raise ValueError('crop behavior not implemented yet')
-        h_diff = h - h_new
+                w_new = w
+                h_new = w
+        h_diff = (h - h_new)
         y += int(h_diff/2)
-        w_diff = w - w_new
+        w_diff = (w - w_new)
         x += int(w_diff/2)
         h = int(h_new)
         w = int(w_new)
-        if x < bound[0] or y < bound[1] or x+w >= bound[2] or y+h >= bound[3]:
+        if x < bound[0] or y < bound[1] or w > bound[2] or h > bound[3]:
             x = rect[0]
             y = rect[1] - rect[2]//4
             w = rect[2]
@@ -251,6 +252,12 @@ class ImageUtilities():
         transformed = cv2.warpPerspective(transformed, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
 
         return transformed
+
+    @staticmethod
+    def hash(img):
+        h = hashlib.new('ripemd160')
+        h.update(img.tobytes())
+        return h.hexdigest()
 
 class Singleton(type):
     _instances = {}
