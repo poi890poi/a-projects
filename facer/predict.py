@@ -108,121 +108,6 @@ def get_data():
     #print(val_labels.shape)
     return (train_data, train_labels, val_data, val_labels)
 
-def train(args):
-    print('Restoring TF model...', model_dir)
-    try:
-        print(self.sess, threading.current_thread().ident)
-        return
-    except AttributeError:
-        pass # Continue intializing...
-
-    self.sess = tf.InteractiveSession()
-
-    with tf.name_scope('input'):
-        self.x = tf.placeholder(tf.float32, [None, np.prod(shape_raw)], name='train_data')
-        y_ = tf.placeholder(tf.float32, [None, n_class], name='labels')
-    with tf.name_scope('input_reshape'):
-        image_shaped_input = tf.reshape(self.x, (-1,)+shape_raw)
-        tf.summary.image('input', image_shaped_input, data_size)
-
-    def fully_connected(input, size):
-        weights = tf.get_variable( 'weights', 
-            shape = [input.get_shape()[1], size],
-            initializer = tf.contrib.layers.xavier_initializer()
-        )
-        biases = tf.get_variable( 'biases',
-            shape = [size],
-            initializer = tf.constant_initializer(0.0)
-        )
-        return tf.matmul(input, weights) + biases
-
-    def fully_connected_relu(input, size):
-        return tf.nn.relu(fully_connected(input, size))
-
-    def conv_relu(input, kernel_size, depth):
-        weights = tf.get_variable( 'weights', 
-            shape = [kernel_size, kernel_size, input.get_shape()[3], depth],
-            initializer = tf.contrib.layers.xavier_initializer()
-        )
-        biases = tf.get_variable( 'biases',
-            shape = [depth],
-            initializer = tf.constant_initializer(0.0)
-        )
-        conv = tf.nn.conv2d(input, weights,
-            strides = [1, 1, 1, 1], padding = 'SAME')
-        return tf.nn.relu(conv + biases)
-
-    def pool(input, size, stride):
-        return tf.nn.max_pool(
-            input, 
-            ksize = [1, size, size, 1], 
-            strides = [1, stride, stride, 1], 
-            padding = 'SAME'
-        )
-
-    with tf.variable_scope('12-net'):
-        input_12 = tf.image.resize_bilinear(image_shaped_input, (12, 12))
-        # Convolutions
-        with tf.variable_scope('conv1'):
-            conv12_1 = conv_relu(input_12, kernel_size=3, depth=16)
-            pool12_1 = pool(conv12_1, size=3, stride=2)
-        shape = pool12_1.get_shape().as_list()
-        flatten12 = tf.reshape(pool12_1, [-1, shape[1] * shape[2] * shape[3]])
-        with tf.variable_scope('fc1'):
-            fc12_1 = fully_connected_relu(flatten12, size=16)
-            fc_final = fc12_1
-
-    """with tf.variable_scope('24-net'):
-        input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
-        # Convolutions
-        with tf.variable_scope('conv1'):
-            conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
-            pool24_1 = pool(conv24_1, size=3, stride=2)
-        shape = pool24_1.get_shape().as_list()
-        flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
-        print('net-24 flatten', flatten24)
-        with tf.variable_scope('fc1'):
-            fc24_1 = fully_connected_relu(flatten24, size=128)
-        
-        fc24_concat = tf.concat([fc24_1, fc12_1], 1)
-        print('net-24 fc', fc24_1)
-        print('net-24 concat', fc24_concat)
-
-    with tf.variable_scope('48-net'):
-        # Convolutions
-        with tf.variable_scope('conv1'):
-            conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
-            pool48_1 = pool(conv48_1, size=3, stride=2)
-            # Normalize, region=9
-        with tf.variable_scope('conv2'):
-            conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
-            # Normalize, region=9
-            pool48_2 = pool(conv48_2, size=3, stride=2)
-        shape = pool48_2.get_shape().as_list()
-        flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
-        with tf.variable_scope('fc1'):
-            fc48_1 = fully_connected_relu(flatten48, size=256)
-        
-        fc48_concat = tf.concat([fc48_1, fc24_concat], 1)
-        print('net-48 concat', fc48_concat)"""
-
-    with tf.variable_scope('out'):
-        self.y = fully_connected(fc_final, size=n_class)
-
-    # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
-    #tf.global_variables_initializer().run()
-
-    self.y = tf.nn.softmax(self.y)
-
-    # Add ops to save and restore all the variables.
-    self.saver = tf.train.Saver(filename=model_dir+'/model.ckpt')
-
-    # Restore variables from disk.
-    time_start = time.time()
-    self.saver.restore(self.sess, model_dir+'/model.ckpt')
-    time_diff = time.time() - time_start
-    print('Model restored.', time_diff)
-
 class Singleton(type):
     _instances = {}
     def __call__(cls, *args, **kwargs):
@@ -233,9 +118,14 @@ class Singleton(type):
 class FaceClassifier(metaclass=Singleton):
     def __init__(self):
         self.model = None
+
     def init(self, model_dir):
         if self.model is None:
-            self.model = FaceCascade({'mode': 'inference', 'ckpt_prefix': './server/models/12-net/model.ckpt'})
+            self.model = FaceCascade({
+                'mode': 'INFERENCE',
+                'model_dir': '../models/cascade',
+                'ckpt_prefix': './server/models/12-net/model.ckpt'
+            })
 
     def detect(self, media):
         timing = dict()

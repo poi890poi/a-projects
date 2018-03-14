@@ -4,7 +4,7 @@ import numpy as np
 class FaceCascade():
     def __init__(self, params=None):
         self.params = params
-        self.model_dir = '../models/cascade'
+        self.model_dir = params['model_dir']
         self.log_dir = self.model_dir + '/log'
         self.ckpt_prefix = params['ckpt_prefix']
         if tf.gfile.Exists(self.log_dir):
@@ -23,21 +23,23 @@ class FaceCascade():
         summarize = False
         is_train = False
         is_inference = False
-        if mode in ['train', 'test']:
-            if mode=='train': is_train = True
-            summarize = True
-            batch_size = 120
-            epochs = 20
-            steps = 2000
-            learn_rate = 0.0005
-        else:
+        if mode=='INFERENCE':
             is_inference = True
+        elif mode in ['TRAIN', 'TEST']:
+            if mode=='TRAIN': is_train = True
+            summarize = True
+            batch_size = self.params['batch_size']
+            epochs = self.params['epochs']
+            steps = self.params['steps']
+            learn_rate = self.params['learn_rate']
+        else:
+            raise(ValueError, 'mode must be either ["INFERENCE", "TRAIN", "TEST"]')
 
         self.sess = tf.InteractiveSession()
 
         with tf.name_scope('input'):
             self.x = tf.placeholder(tf.float32, [None, np.prod(shape_raw)], name='train_data')
-            y_ = tf.placeholder(tf.float32, [None, n_class], name='labels')
+            self.y_ = tf.placeholder(tf.float32, [None, n_class], name='labels')
         with tf.name_scope('input_reshape'):
             image_shaped_input = tf.reshape(self.x, (-1,)+shape_raw)
             if summarize: tf.summary.image('input', image_shaped_input, batch_size)
@@ -143,9 +145,9 @@ class FaceCascade():
 
         if is_train:
             with tf.variable_scope('dropout'):
-                keep_prob = tf.placeholder(tf.float32)
-                tf.summary.scalar('dropout_keep_probability', keep_prob)
-                fc_final = tf.nn.dropout(fc_final, keep_prob)
+                self.keep_prob = tf.placeholder(tf.float32)
+                tf.summary.scalar('dropout_keep_probability', self.keep_prob)
+                fc_final = tf.nn.dropout(fc_final, self.keep_prob)
         with tf.variable_scope('out'):
             self.y = fully_connected(fc_final, size=n_class)
 
@@ -164,25 +166,26 @@ class FaceCascade():
                 # So here we use tf.nn.softmax_cross_entropy_with_logits on the
                 # raw outputs of the nn_layer above, and then average across
                 # the batch.
-                diff = tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=self.y)
+                diff = tf.nn.softmax_cross_entropy_with_logits(labels=self.y_, logits=self.y)
                 with tf.name_scope('total'):
                     cross_entropy = tf.reduce_mean(diff)
             tf.summary.scalar('cross_entropy', cross_entropy)
 
             with tf.name_scope('train'):
-                train_step = tf.train.AdamOptimizer(learn_rate).minimize(
+                self.train_step = tf.train.AdamOptimizer(learn_rate).minimize(
                     cross_entropy)
 
         if summarize:
+            print('TRAIN')
             with tf.name_scope('accuracy'):
                 with tf.name_scope('correct_prediction'):
-                    correct_prediction = tf.equal(tf.argmax(self.y, 1), tf.argmax(y_, 1))
+                    correct_prediction = tf.equal(tf.argmax(self.y, 1), tf.argmax(self.y_, 1))
                 with tf.name_scope('accuracy'):
-                    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-            tf.summary.scalar('accuracy', accuracy)
+                    self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+            tf.summary.scalar('accuracy', self.accuracy)
 
             # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
-            merged = tf.summary.merge_all()
+            self.merged = tf.summary.merge_all()
             self.train_writer = tf.summary.FileWriter(self.log_dir+'/train', self.sess.graph)
             self.test_writer = tf.summary.FileWriter(self.log_dir+'/test')
             tf.global_variables_initializer().run()

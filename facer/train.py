@@ -33,7 +33,6 @@ def prepare_data():
         while True:
             f = DirectoryWalker().get_a_file(directory='../data/face/train/positive', filters=['.jpg'])
             if f and f.path:
-                print(f.path)
                 filelist['positive'].append(f.path)
             else:
                 print('positive samples listed', len(filelist['positive']))
@@ -42,7 +41,6 @@ def prepare_data():
         while True:
             f = DirectoryWalker().get_a_file(directory='../data/face/train/negative', filters=['.jpg'])
             if f and f.path:
-                print(f.path)
                 filelist['negative'].append(f.path)
             else:
                 print('negative samples listed', len(filelist['negative']))
@@ -146,161 +144,15 @@ def prepare_data():
     return (train_data, train_labels, val_data, val_labels)
 
 def train(args):
-    log_dir = '../models/cascade'
-    """if tf.gfile.Exists(log_dir):
-        tf.gfile.DeleteRecursively(log_dir)
-    tf.gfile.MakeDirs(log_dir)"""
-
-    sess = tf.InteractiveSession()
- 
-    with tf.name_scope('input'):
-        x = tf.placeholder(tf.float32, [None, np.prod(shape_raw)], name='train_data')
-        y_ = tf.placeholder(tf.float32, [None, n_class], name='labels')
-    with tf.name_scope('input_reshape'):
-        image_shaped_input = tf.reshape(x, (-1,)+shape_raw)
-        tf.summary.image('input', image_shaped_input, batch_size)
-        print(image_shaped_input)
-
-    def variable_summaries(var):
-        """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-        with tf.name_scope('summaries'):
-            mean = tf.reduce_mean(var)
-            tf.summary.scalar('mean', mean)
-            with tf.name_scope('stddev'):
-                stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-            tf.summary.scalar('stddev', stddev)
-            tf.summary.scalar('max', tf.reduce_max(var))
-            tf.summary.scalar('min', tf.reduce_min(var))
-            tf.summary.histogram('histogram', var)
-
-    def fully_connected(input, size):
-        weights = tf.get_variable( 'weights', 
-            shape = [input.get_shape()[1], size],
-            initializer = tf.contrib.layers.xavier_initializer()
-        )
-        biases = tf.get_variable( 'biases',
-            shape = [size],
-            initializer = tf.constant_initializer(0.0)
-        )
-        variable_summaries(weights)
-        variable_summaries(biases)
-        return tf.matmul(input, weights) + biases
-
-    def fully_connected_relu(input, size):
-        return tf.nn.relu(fully_connected(input, size))
-
-    def conv_relu(input, kernel_size, depth):
-        weights = tf.get_variable( 'weights', 
-            shape = [kernel_size, kernel_size, input.get_shape()[3], depth],
-            initializer = tf.contrib.layers.xavier_initializer()
-        )
-        biases = tf.get_variable( 'biases',
-            shape = [depth],
-            initializer = tf.constant_initializer(0.0)
-        )
-        print(weights.name)
-        print(biases.name)
-        variable_summaries(weights)
-        variable_summaries(biases)
-        conv = tf.nn.conv2d(input, weights,
-            strides = [1, 1, 1, 1], padding = 'SAME')
-        return tf.nn.relu(conv + biases)
-
-    def pool(input, size, stride):
-        return tf.nn.max_pool(
-            input, 
-            ksize = [1, size, size, 1], 
-            strides = [1, stride, stride, 1], 
-            padding = 'SAME'
-        )
-
-    with tf.variable_scope('12-net'):
-        input_12 = tf.image.resize_bilinear(image_shaped_input, (12, 12))
-        # Convolutions
-        with tf.variable_scope('conv1'):
-            conv12_1 = conv_relu(input_12, kernel_size=3, depth=16)
-            pool12_1 = pool(conv12_1, size=3, stride=2)
-            print(conv12_1.name)
-            print(pool12_1.name)
-        shape = pool12_1.get_shape().as_list()
-        flatten12 = tf.reshape(pool12_1, [-1, shape[1] * shape[2] * shape[3]])
-        with tf.variable_scope('fc1'):
-            fc12_1 = fully_connected_relu(flatten12, size=16)
-            fc_final = fc12_1
-
-    """with tf.variable_scope('24-net'):
-        input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
-        # Convolutions
-        with tf.variable_scope('conv1'):
-            conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
-            pool24_1 = pool(conv24_1, size=3, stride=2)
-        shape = pool24_1.get_shape().as_list()
-        flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
-        print('net-24 flatten', flatten24)
-        with tf.variable_scope('fc1'):
-            fc24_1 = fully_connected_relu(flatten24, size=128)
-        
-        fc24_concat = tf.concat([fc24_1, fc12_1], 1)
-        print('net-24 fc', fc24_1)
-        print('net-24 concat', fc24_concat)
-
-    with tf.variable_scope('48-net'):
-        # Convolutions
-        with tf.variable_scope('conv1'):
-            conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
-            pool48_1 = pool(conv48_1, size=3, stride=2)
-            # Normalize, region=9
-        with tf.variable_scope('conv2'):
-            conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
-            # Normalize, region=9
-            pool48_2 = pool(conv48_2, size=3, stride=2)
-        shape = pool48_2.get_shape().as_list()
-        flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
-        with tf.variable_scope('fc1'):
-            fc48_1 = fully_connected_relu(flatten48, size=256)
-        
-        fc48_concat = tf.concat([fc48_1, fc24_concat], 1)
-        print('net-48 concat', fc48_concat)"""
-
-    with tf.variable_scope('dropout'):
-        keep_prob = tf.placeholder(tf.float32)
-        tf.summary.scalar('dropout_keep_probability', keep_prob)
-        dropped = tf.nn.dropout(fc_final, keep_prob)
-    with tf.variable_scope('out'):
-        y = fully_connected(dropped, size=n_class)
-
-    with tf.name_scope('cross_entropy'):
-        # The raw formulation of cross-entropy,
-        #
-        # tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(tf.softmax(y)),
-        #                               reduction_indices=[1]))
-        #
-        # can be numerically unstable.
-        #
-        # So here we use tf.nn.softmax_cross_entropy_with_logits on the
-        # raw outputs of the nn_layer above, and then average across
-        # the batch.
-        diff = tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=y)
-        with tf.name_scope('total'):
-            cross_entropy = tf.reduce_mean(diff)
-    tf.summary.scalar('cross_entropy', cross_entropy)
-
-    with tf.name_scope('train'):
-        train_step = tf.train.AdamOptimizer(learn_rate).minimize(
-            cross_entropy)
-
-    with tf.name_scope('accuracy'):
-        with tf.name_scope('correct_prediction'):
-            correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(y_, 1))
-        with tf.name_scope('accuracy'):
-            accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    tf.summary.scalar('accuracy', accuracy)
-
-    # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
-    merged = tf.summary.merge_all()
-    train_writer = tf.summary.FileWriter(log_dir+'/train', sess.graph)
-    test_writer = tf.summary.FileWriter(log_dir+'/test')
-    tf.global_variables_initializer().run()
+    model = FaceCascade({
+        'mode': 'TRAIN',
+        'model_dir': '../models/cascade',
+        'ckpt_prefix': './server/models/12-net/model.ckpt',
+        'batch_size': 120,
+        'epochs': 20,
+        'steps': 2000,
+        'learn_rate': 0.0005,
+    })
 
     # Train the model, and also write summaries.
     # Every 10th step, measure test-set accuracy, and write test summaries
@@ -319,10 +171,7 @@ def train(args):
             xs = val_data.reshape((-1,)+shape_flat)
             ys = val_labels
             k = 1.0
-        return {x: xs, y_: ys, keep_prob: k}
-
-    # Add ops to save and restore all the variables.
-    saver = tf.train.Saver()
+        return {model.x: xs, model.y_: ys, model.keep_prob: k}
 
     forward_time = 0
     forward_count = 0
@@ -330,15 +179,15 @@ def train(args):
     for i in range(epochs*steps):
         if i % 10 == 0:  # Record summaries and test-set accuracy
             time_start = time.time()
-            summary, acc = sess.run([merged, accuracy], feed_dict=feed_dict(False))
+            summary, acc = model.sess.run([model.merged, model.accuracy], feed_dict=feed_dict(False))
             time_diff = time.time() - time_start
             forward_time += time_diff
             forward_count += len(val_data)
-            test_writer.add_summary(summary, i)
+            model.test_writer.add_summary(summary, i)
 
             try:
                 if acc >= acc_best:
-                    save_path = saver.save(sess, '../models/cascade/model.ckpt')
+                    save_path = saver.save(model.sess, model.params['ckpt_prefix'])
                     print('Model saved in path: %s' % save_path)
                     acc_best = acc
             except:
@@ -349,22 +198,22 @@ def train(args):
             if i % 100 == 99:  # Record execution stats
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
-                summary, _ = sess.run([merged, train_step],
+                summary, _ = model.sess.run([model.merged, model.train_step],
                                     feed_dict=feed_dict(True),
                                     options=run_options,
                                     run_metadata=run_metadata)
-                train_writer.add_run_metadata(run_metadata, 'step%03d' % i)
-                train_writer.add_summary(summary, i)
+                model.train_writer.add_run_metadata(run_metadata, 'step%03d' % i)
+                model.train_writer.add_summary(summary, i)
                 print('Adding run metadata for', i)
             else:  # Record a summary
-                summary, _ = sess.run([merged, train_step], feed_dict=feed_dict(True))
-                train_writer.add_summary(summary, i)
+                summary, _ = model.sess.run([model.merged, model.train_step], feed_dict=feed_dict(True))
+                model.train_writer.add_summary(summary, i)
             if i % steps == steps-1:
                 print('Get new data')
                 print()
                 train_data, train_labels, val_data, val_labels = prepare_data()
-    train_writer.close()
-    test_writer.close()
+    model.train_writer.close()
+    model.test_writer.close()
 
 def run(args):
     print('call train instead')
