@@ -1,48 +1,199 @@
 import tensorflow as tf
 import numpy as np
 
-class Cascade():
+class FaceCascade():
     def __init__(self, params=None):
-        pass
-    
-    def net_12(self, input, is_training):
-        # Input data.
-        tf_train_dataset = tf.placeholder(
-            tf.float32,
-            shape=(1, 12, 12, 3))
+        self.params = params
+        self.model_dir = '../models/cascade'
+        self.log_dir = self.model_dir + '/log'
+        self.ckpt_prefix = params['ckpt_prefix']
+        if tf.gfile.Exists(self.log_dir):
+            tf.gfile.DeleteRecursively(self.log_dir)
+        tf.gfile.MakeDirs(self.log_dir)
+        self.model()
 
-        with tf.variable_scope('conv'):
-            conv1 = conv_relu(input, kernel_size = 3, depth = 16, stride = 1)
-            pool1 = pool(conv1, size = 2)
-            #pool1 = tf.cond(is_training, lambda: tf.nn.dropout(pool1, keep_prob = 0.5), lambda: pool1)
+    def model(self):
+        mode = self.params['mode']
 
-        print(conv1)
-        print(pool1)
-        shape = pool1.get_shape().as_list()
-        pool1 = tf.reshape(pool1, [-1, shape[1] * shape[2] * shape[3]])
-        print(pool1)
+        shape_raw = (48, 48, 3)
+        shape_flat = (np.prod(shape_raw),)
+        shape_image = (12, 12, 3)
+        n_class = 2
 
-        #flattened = tf.concat(1, [pool1, pool2, pool3])
-        flattened = tf.concat([pool1,], 1)
-        print(flattened)
+        summarize = False
+        is_train = False
+        is_inference = False
+        if mode in ['train', 'test']:
+            if mode=='train': is_train = True
+            summarize = True
+            batch_size = 120
+            epochs = 20
+            steps = 2000
+            learn_rate = 0.0005
+        else:
+            is_inference = True
 
-        with tf.variable_scope('fc'):
-            fc = fully_connected_relu(flattened, size = 16)
-            print(fc)
-            if is_training:
-                fc = tf.nn.dropout(fc, keep_prob = 0.5)
-                print(fc)
+        self.sess = tf.InteractiveSession()
+
+        with tf.name_scope('input'):
+            self.x = tf.placeholder(tf.float32, [None, np.prod(shape_raw)], name='train_data')
+            y_ = tf.placeholder(tf.float32, [None, n_class], name='labels')
+        with tf.name_scope('input_reshape'):
+            image_shaped_input = tf.reshape(self.x, (-1,)+shape_raw)
+            if summarize: tf.summary.image('input', image_shaped_input, batch_size)
+
+        def variable_summaries(var):
+            """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+            with tf.name_scope('summaries'):
+                mean = tf.reduce_mean(var)
+                tf.summary.scalar('mean', mean)
+                with tf.name_scope('stddev'):
+                    stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+                tf.summary.scalar('stddev', stddev)
+                tf.summary.scalar('max', tf.reduce_max(var))
+                tf.summary.scalar('min', tf.reduce_min(var))
+                tf.summary.histogram('histogram', var)
+
+        def fully_connected(input, size):
+            weights = tf.get_variable( 'weights', 
+                shape = [input.get_shape()[1], size],
+                initializer = tf.contrib.layers.xavier_initializer()
+            )
+            biases = tf.get_variable( 'biases',
+                shape = [size],
+                initializer = tf.constant_initializer(0.0)
+            )
+            if summarize:
+                variable_summaries(weights)
+                variable_summaries(biases)
+            return tf.matmul(input, weights) + biases
+
+        def fully_connected_relu(input, size):
+            return tf.nn.relu(fully_connected(input, size))
+
+        def conv_relu(input, kernel_size, depth):
+            weights = tf.get_variable( 'weights', 
+                shape = [kernel_size, kernel_size, input.get_shape()[3], depth],
+                initializer = tf.contrib.layers.xavier_initializer()
+            )
+            biases = tf.get_variable( 'biases',
+                shape = [depth],
+                initializer = tf.constant_initializer(0.0)
+            )
+            if summarize:
+                variable_summaries(weights)
+                variable_summaries(biases)
+            conv = tf.nn.conv2d(input, weights,
+                strides = [1, 1, 1, 1], padding = 'SAME')
+            return tf.nn.relu(conv + biases)
+
+        def pool(input, size, stride):
+            return tf.nn.max_pool(
+                input, 
+                ksize = [1, size, size, 1], 
+                strides = [1, stride, stride, 1], 
+                padding = 'SAME'
+            )
+
+        with tf.variable_scope('12-net'):
+            input_12 = tf.image.resize_bilinear(image_shaped_input, (12, 12))
+            # Convolutions
+            with tf.variable_scope('conv1'):
+                conv12_1 = conv_relu(input_12, kernel_size=3, depth=16)
+                pool12_1 = pool(conv12_1, size=3, stride=2)
+            shape = pool12_1.get_shape().as_list()
+            flatten12 = tf.reshape(pool12_1, [-1, shape[1] * shape[2] * shape[3]])
+            with tf.variable_scope('fc1'):
+                fc12_1 = fully_connected_relu(flatten12, size=16)
+                fc_final = fc12_1
+
+        """with tf.variable_scope('24-net'):
+            input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
+            # Convolutions
+            with tf.variable_scope('conv1'):
+                conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
+                pool24_1 = pool(conv24_1, size=3, stride=2)
+            shape = pool24_1.get_shape().as_list()
+            flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
+            print('net-24 flatten', flatten24)
+            with tf.variable_scope('fc1'):
+                fc24_1 = fully_connected_relu(flatten24, size=128)
+            
+            fc24_concat = tf.concat([fc24_1, fc12_1], 1)
+            print('net-24 fc', fc24_1)
+            print('net-24 concat', fc24_concat)
+
+        with tf.variable_scope('48-net'):
+            # Convolutions
+            with tf.variable_scope('conv1'):
+                conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
+                pool48_1 = pool(conv48_1, size=3, stride=2)
+                # Normalize, region=9
+            with tf.variable_scope('conv2'):
+                conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
+                # Normalize, region=9
+                pool48_2 = pool(conv48_2, size=3, stride=2)
+            shape = pool48_2.get_shape().as_list()
+            flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
+            with tf.variable_scope('fc1'):
+                fc48_1 = fully_connected_relu(flatten48, size=256)
+            
+            fc48_concat = tf.concat([fc48_1, fc24_concat], 1)
+            print('net-48 concat', fc48_concat)"""
+
+        if is_train:
+            with tf.variable_scope('dropout'):
+                keep_prob = tf.placeholder(tf.float32)
+                tf.summary.scalar('dropout_keep_probability', keep_prob)
+                fc_final = tf.nn.dropout(fc_final, keep_prob)
         with tf.variable_scope('out'):
-            logits = fully_connected(fc, size = 2)
-            print(logits)
+            self.y = fully_connected(fc_final, size=n_class)
 
-        return logits
+        if is_inference:
+            self.y = tf.nn.softmax(self.y)
 
-    def net_24():
-        pass
+        if is_train:
+            with tf.name_scope('cross_entropy'):
+                # The raw formulation of cross-entropy,
+                #
+                # tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(tf.softmax(y)),
+                #                               reduction_indices=[1]))
+                #
+                # can be numerically unstable.
+                #
+                # So here we use tf.nn.softmax_cross_entropy_with_logits on the
+                # raw outputs of the nn_layer above, and then average across
+                # the batch.
+                diff = tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=self.y)
+                with tf.name_scope('total'):
+                    cross_entropy = tf.reduce_mean(diff)
+            tf.summary.scalar('cross_entropy', cross_entropy)
 
-    def net_48():
-        pass
+            with tf.name_scope('train'):
+                train_step = tf.train.AdamOptimizer(learn_rate).minimize(
+                    cross_entropy)
+
+        if summarize:
+            with tf.name_scope('accuracy'):
+                with tf.name_scope('correct_prediction'):
+                    correct_prediction = tf.equal(tf.argmax(self.y, 1), tf.argmax(y_, 1))
+                with tf.name_scope('accuracy'):
+                    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+            tf.summary.scalar('accuracy', accuracy)
+
+            # Merge all the summaries and write them out to /tmp/tensorflow/mnist/logs/mnist_with_summaries (by default)
+            merged = tf.summary.merge_all()
+            self.train_writer = tf.summary.FileWriter(self.log_dir+'/train', self.sess.graph)
+            self.test_writer = tf.summary.FileWriter(self.log_dir+'/test')
+            tf.global_variables_initializer().run()
+
+        # Add ops to save and restore all the variables.
+        self.saver = tf.train.Saver(filename=self.ckpt_prefix)
+
+        if is_inference:
+            # Restore variables from disk.
+            self.saver.restore(self.sess, self.ckpt_prefix)
+            print('Model restored.', self.ckpt_prefix)
 
 class SimpleClassifier():
     def __init__(self, model, train_id, params=None):
