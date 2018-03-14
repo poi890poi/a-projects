@@ -81,9 +81,12 @@ def try_exit():
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
-        print('MainHandler::get()')
+        print('MainHandler::get()', self.request.uri, self.request.host, self.request.full_url())
+        cgi_prefix = ''
+        if self.request.host.startswith('cgibackend'):
+            cgi_prefix = 'cgi/'
         loader = tornado.template.Loader("./server/templates")
-        html = loader.load("index.html").generate()
+        html = loader.load("index.html").generate(cgi_prefix=cgi_prefix)
         self.write(html)
 
 class GTSRBHandler(tornado.web.RequestHandler):

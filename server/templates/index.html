@@ -44,8 +44,8 @@
         }
     </style>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
-    <script src="../cgi/static/scripts/graphics.min.js"></script>
-    <script src="../cgi/static/scripts/upload.js"></script>
+    <script src="../{{ cgi_prefix }}static/scripts/graphics.min.js"></script>
+    <script src="../{{ cgi_prefix }}static/scripts/upload.js"></script>
     <script>
         $( document ).ready(function() {
             $('img.error').hover( function(e) {
@@ -66,7 +66,7 @@
             );
 
             $('#file_upload').change( function (e) {
-                    mUploadManager.enqueueList({type: 'face', model: '12-net', endpoint: '../cgi/predict'}, $(this), function (status, response) {
+                    mUploadManager.enqueueList({type: 'face', model: '12-net', endpoint: '../{{ cgi_prefix }}predict'}, $(this), function (status, response) {
                         if (status==mUploadManager.STATUS.Error) {
                             if (response.code==mUploadManager.ERROR.NotAFile) {
                                 console.log('mUploadManager: Not a file');
