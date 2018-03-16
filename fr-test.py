@@ -12,6 +12,10 @@ def main():
         predict(ARGS)
     elif ARGS.test=='server':
         server_start(ARGS)
+    elif ARGS.test=='hnm':
+        hnm(ARGS)
+    elif ARGS.test=='val':
+        val(ARGS)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
@@ -28,26 +32,28 @@ if __name__== "__main__":
         help='Display window and wait for user input, for preview.'
     )
     parser.add_argument(
-        '--source_dir',
+        '--subset',
         type=str,
-        default='../data/face/wiki-face/extracted/wiki',
-        help='Path to the data.'
+        default='',
+        help='Name of subset of dataset to be processed.'
+    )
+    parser.add_argument(
+        '--count',
+        type=int,
+        default=0,
+        help='Count of entries to be processed or generated.'
+    )
+    parser.add_argument(
+        '--model',
+        type=str,
+        default='./server/models/12-net/model.ckpt',
+        help='Path and prefix of Tensorflow checkpoint.'
     )
     parser.add_argument(
         '--annotations',
         type=str,
         default='../data/face/wiki-face/extracted/wiki/wiki.mat',
         help='Path to annotations.'
-    )
-    parser.add_argument(
-        '--model',
-        type=str,
-        default='afanet11',
-    )
-    parser.add_argument(
-        '--subset',
-        type=str,
-        default='positive',
     )
     parser.add_argument(
         '--train_id',

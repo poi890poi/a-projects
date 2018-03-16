@@ -6,6 +6,7 @@ from face.dlibdetect import FaceDetector
 import os.path
 import pprint
 import time
+import json
 
 import threading
 import base64
@@ -108,6 +109,255 @@ def get_data():
     #print(val_labels.shape)
     return (train_data, train_labels, val_data, val_labels)
 
+# python fr-test.py --test=val --preview --model=../models/cascade/checkpoint/model.ckpt
+# python fr-test.py --test=hnm --model=../models/cascade/checkpoint/model.ckpt --subset=train --count=2400
+
+def val_stats(args):
+    classifier = FaceClassifier()
+    classifier.init(args.model)
+
+    dir_pt = 0
+    directories = [
+        ['../data/face/val/positive', [0., 1.]],
+        ['../data/face/val/negative', [1., 0.]],
+    ]
+
+    batch_size = 1200
+    while True:
+        val_data = list()
+        val_labels = list()
+
+        directory = directories[dir_pt][0]
+        label = directories[dir_pt][1]
+
+        while True:
+            f = DirectoryWalker().get_a_file(directory=directory, filters=['.jpg'])
+            if f is None: break
+            img = cv2.imread(f.path, 1)
+            if img is None:break
+
+            height, width, *rest = img.shape
+            (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
+            face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+            face = imresize(face, [48, 48])
+            face = np.array(face, dtype=np.float)/255
+
+            val_data.append(face)
+            val_labels.append(label)
+            if len(val_data)>=batch_size:
+                break
+        
+        if len(val_data)==0:
+            # No more data in the directory; proceed to next directory
+            dir_pt += 1
+            if dir_pt>=len(directories):
+                break
+        else:
+            val_labels = np.array(val_labels)
+            val_data = np.array(val_data)
+            classifier.val(val_data, val_labels)
+
+def val_preview(args):
+    print()
+    subsamples_per_image = 32
+    preview = args.preview
+    print(preview)
+    
+    subset = 'val'
+    year = '2017'
+    path_anno = '../data/coco/annotations_trainval2017/annotations/instances_'+subset+year+'.json'
+    path_source = '../data/coco/'+subset+year+'/'+subset+year
+
+    print('Loading annotations...', path_anno)
+    anno = None
+    with open(path_anno, 'r') as f:
+        anno = json.load(f)
+    print('done')
+    print()
+
+    categories = dict()
+    for ele in anno['categories']:
+        categories[ele['id']] = ele
+
+    def get_image_by_id(id):
+        for ele in anno['images']:
+            if ele['id']==id:
+                return ele
+        return None
+
+    def get_anno_by_image_id(id):
+        _annos = list()
+        for ele in anno['annotations']:
+            if ele['image_id']==id:
+                _annos.append(ele)
+        return _annos
+
+    classifier = FaceClassifier()
+    classifier.init(args.model)
+
+    for ele in anno['images']:
+        id = ele['id']
+        file_name = ele['file_name']
+        _annos = get_anno_by_image_id(id) 
+        #print(_annos)
+
+        inpath = path_source + '/' + file_name
+        img = cv2.imread(inpath, 1)
+        img = ImageUtilities.preprocess(img, convert_gray=None, equalize=True, denoise=False, maxsize=-1)
+
+        target_class = 1
+        rects, predictions, timing = classifier.multi_scale_detection(img)
+        if len(predictions):
+            scores = np.array(predictions)[:, target_class:target_class+1].reshape((-1,))
+            nms = tf.image.non_max_suppression(np.array(rects), scores, max_output_size=99999)
+            for index, value in enumerate(nms.eval()):
+                rect = rects[value]
+
+                face = img[rect[1]:rect[1]+rect[3], rect[0]:rect[0]+rect[2], :]
+                face = imresize(face, shape_raw[0:2])
+                if preview: cv2.rectangle(img, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), (0, 255, 0), 2)
+
+        if preview:
+            canvas = ViewportManager().open('preview', shape=img.shape, blocks=(1, 2))
+            ViewportManager().put('preview', img, (0, 0))
+            ViewportManager().update('preview')
+            
+            k = ViewportManager().wait_key()
+            if k in (ViewportManager.KEY_ENTER, ViewportManager.KEY_SPACE):
+                pass
+
+def val(args):
+    if args.preview:
+        val_preview(args)
+    else:
+        val_stats(args)
+
+def hnm(args):
+    print()
+    count = args.count
+    subsamples_per_image = 32
+    preview = False
+    
+    subset = args.subset
+    year = '2017'
+    path_anno = '../data/coco/annotations_trainval2017/annotations/instances_'+subset+year+'.json'
+    path_source = '../data/coco/'+subset+year+'/'+subset+year
+    path_target = '../data/face/'+subset+'/negative/coco'
+
+    print('Loading annotations...', path_anno)
+    anno = None
+    with open(path_anno, 'r') as f:
+        anno = json.load(f)
+    print('done')
+    print()
+
+    categories = dict()
+    for ele in anno['categories']:
+        categories[ele['id']] = ele
+
+    def get_image_by_id(id):
+        for ele in anno['images']:
+            if ele['id']==id:
+                return ele
+        return None
+
+    def get_anno_by_image_id(id):
+        _annos = list()
+        for ele in anno['annotations']:
+            if ele['image_id']==id:
+                _annos.append(ele)
+        return _annos
+
+    def rect_overlap(rect1, rect2):
+        if rect2[0] >= rect1[0]+rect1[2] or rect2[1] >= rect1[1]+rect1[3] or rect1[0] >= rect2[0]+rect2[2] or rect1[1] >= rect2[1]+rect2[3]:
+            return 0
+        return 1
+
+    classifier = FaceClassifier()
+    classifier.init(args.model)
+
+    for ele in anno['images']:
+        id = ele['id']
+        file_name = ele['file_name']
+        _annos = get_anno_by_image_id(id) 
+        #print(_annos)
+
+        inpath = path_source + '/' + file_name
+        img = cv2.imread(inpath, 1)
+        img = ImageUtilities.preprocess(img, convert_gray=None, equalize=True, denoise=False, maxsize=-1)
+
+        rects_exclude = list()
+        for _object in _annos:
+            category_id = _object['category_id']
+            category = categories[category_id]
+            #print(category)
+            bbox = _object['bbox']
+            bbox = np.array(bbox, dtype=np.int).tolist()
+            if category['supercategory']=='person':
+                if preview: cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), (0, 0, 255), 2)
+                rects_exclude.append(bbox)
+
+        target_class = 1
+        rects, predictions, timing = classifier.multi_scale_detection(img)
+
+        if len(predictions)<=0:
+            continue
+        
+        scores = np.array(predictions)[:, target_class:target_class+1].reshape((-1,))
+        nms = tf.image.non_max_suppression(np.array(rects), scores, max_output_size=subsamples_per_image)
+        for index, value in enumerate(nms.eval()):
+            rect = rects[value]
+
+            person_overlap = False
+            for exclude in rects_exclude:
+                if rect_overlap(rect, exclude):
+                    person_overlap = True
+                    break
+            
+            if not person_overlap:
+                face = img[rect[1]:rect[1]+rect[3], rect[0]:rect[0]+rect[2], :]
+                face = imresize(face, shape_raw[0:2])
+                outpath = path_target + '/' + ImageUtilities.hash(face) + '.jpg'
+                cv2.imwrite(outpath, face)
+                print('imwrite', outpath, count)
+                count -= 1
+                if count<=0: return
+                if preview: cv2.rectangle(img, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), (0, 255, 0), 2)
+
+        if preview:
+            canvas = ViewportManager().open('preview', shape=img.shape, blocks=(1, 2))
+            ViewportManager().put('preview', img, (0, 0))
+            ViewportManager().update('preview')
+            
+            k = ViewportManager().wait_key()
+            if k in (ViewportManager.KEY_ENTER, ViewportManager.KEY_SPACE):
+                pass
+
+def predict(args):
+    path_source = '../data/coco/val2017/val2017'
+
+    classifier = FaceClassifier()
+    classifier.init(args.model)
+
+    while True:
+        f = DirectoryWalker().get_a_file(directory=path_source, filters=['.jpg'])
+        img = cv2.imread(f.path, 1)
+        if img is None:
+            continue
+
+        rects, predictions, timing = classifier.multi_scale_detection(img)
+
+        for rect in rects:
+            cv2.rectangle(img, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), (0, 255, 0), 2)
+
+        canvas = ViewportManager().open('preview', shape=img.shape, blocks=(1, 2))
+        ViewportManager().put('preview', img, (0, 0))
+        ViewportManager().update('preview')
+        
+        k = ViewportManager().wait_key()
+        if k in (ViewportManager.KEY_ENTER, ViewportManager.KEY_SPACE):
+            pass
+
 class Singleton(type):
     _instances = {}
     def __call__(cls, *args, **kwargs):
@@ -124,9 +374,122 @@ class FaceClassifier(metaclass=Singleton):
             self.model = FaceCascade({
                 'mode': 'INFERENCE',
                 'model_dir': '../models/cascade',
-                'ckpt_prefix': './server/models/12-net/model.ckpt'
+                'ckpt_prefix': model_dir
             })
+        self.threshold = 0.99
 
+        self.count_val = 0
+        self.count_correct = 0
+        self.count_positive = 0
+        self.count_true_positive = 0
+
+    def val(self, val_data, val_labels):
+        feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}
+        predictions = self.model.sess.run(self.model.y, feed_dict)
+
+        i = 0
+        for p in predictions:
+            ground_truth = val_labels[i]
+            if np.argmax(ground_truth)==1:
+                self.count_positive += 1
+                if np.argmax(p)==1:
+                    self.count_true_positive += 1
+
+            if np.argmax(p)==np.argmax(ground_truth):
+                self.count_correct += 1
+
+            i += 1
+
+        self.count_val += len(predictions)
+
+        print()
+        #print('feed', len(predictions))
+        #print('total', self.count_val, 'positive', self.count_positive)
+        print('Precision:', self.count_correct/self.count_val)
+        print('Recall:', self.count_true_positive/self.count_positive)
+
+    def multi_scale_detection(self, img):
+        source = np.copy(img)
+
+        timing = dict()
+        timing['preprocess'] = 0
+        timing['detect'] = 0
+
+        window_size = np.array([48, 48], dtype=np.int)
+        window_stride = 12
+        stride_x = np.array([0, window_stride], dtype=np.int)
+        stride_y = np.array([window_stride, 0], dtype=np.int)
+        
+        enlarging_rate = 1.3
+        contracting_rate = 1./enlarging_rate
+        min_size = window_size[0]*3
+
+        pyramid = list()
+        pyramid.append(img)
+        pyramid_level = 0
+        window_list = list()
+        pos_list = list()
+
+        time_start = time.time()
+        
+        height, width, *_ = img.shape
+        print(height, width)
+        height_, width_, *_ = img.shape
+
+        while True:
+
+            window_pos = np.array([0, 0], dtype=np.int)
+            while True:
+                while True:
+                    #print(window_pos)
+                    # Get projection from source image
+                    face = np.copy(pyramid[pyramid_level][window_pos[0]:window_pos[0]+window_size[0], window_pos[1]:window_pos[1]+window_size[1], :], shape_raw[0:2])
+                    window_list.append(face)
+                    w = window_pos
+                    rect = np.concatenate((np.flip(w, axis=0), np.flip(window_size, axis=0)), axis=0)
+                    rect = (rect*width/width_).astype(np.int).tolist()
+                    pos_list.append(rect)
+
+                    window_pos += stride_x
+                    if window_pos[1]+window_size[1] >= width_:
+                        window_pos[1] = 0
+                        window_pos += stride_y
+                        break
+                if window_pos[0]+window_size[0] >= height_:
+                    break
+
+            height_ = int(height_*contracting_rate)
+            width_ = int(width_*contracting_rate)
+            pyramid.append(imresize(pyramid[pyramid_level], [height_, width_]))
+            pyramid_level += 1
+            if width_<min_size:
+                break
+
+        print(len(window_list), 'subsamples')
+        val_data = np.array(window_list, dtype=np.float32)/255
+        reshaped = val_data.reshape((-1,)+shape_flat)
+        time_diff = time.time() - time_start
+        timing['crop'] = time_diff*1000
+
+        time_start = time.time()
+        feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}
+        predictions = self.model.sess.run(self.model.y, feed_dict)
+        time_diff = time.time() - time_start
+        print(time_diff*1000, 'ms')
+        print(time_diff*1000/len(window_list), 'ms per window')
+        timing['cnn'] = time_diff*1000
+
+        rects_ = list()
+        predictions_ = list()
+        i = 0
+        for p in predictions:
+            if np.argmax(p)==1:
+                rects_.append(pos_list[i])
+                predictions_.append(p.tolist())
+            i += 1
+
+        return (rects_, predictions_, timing)
+        
     def detect(self, media):
         timing = dict()
         #print(media)
@@ -136,6 +499,8 @@ class FaceClassifier(metaclass=Singleton):
             img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
 
         if img is not None:
+            return self.multi_scale_detection(img)
+
             #print(img.shape)
             src_shape = img.shape
             

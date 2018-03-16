@@ -16,16 +16,20 @@ shape_raw = (48, 48, 3)
 shape_flat = (np.prod(shape_raw),)
 shape_image = (12, 12, 3)
 n_class = 2
-batch_size = 120
-epochs = 20
-steps = 2000
-learn_rate = 0.0005
+batch_size = 128
+epochs = 160
+steps = 1000
+learn_rate = 0.0008
+
+prep_denoise = False
+prep_equalize = False
 
 filelist = {
     'init': True,
     'positive': list(),
     'negative': list(),
     'pointer': {'positive': 0, 'negative': 0},
+    'flip': {'positive': -1, 'negative': -1},
 }
 
 def prepare_data():
@@ -51,22 +55,36 @@ def prepare_data():
     def get_a_file(set):
         if filelist['pointer'][set] >= len(filelist[set]):
             filelist['pointer'][set] = 0
+            filelist['flip'][set] *= -1
             shuffle(filelist[set])
         index = filelist['pointer'][set]
         filelist['pointer'][set] += 1
-        return filelist[set][index]
+
+        imgpath = filelist[set][index]
+
+        img = cv2.imread(imgpath, 1)
+        height, width, *rest = img.shape
+        (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
+        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+        face = imresize(face, shape_raw[0:2])
+
+        #if filelist['flip'][set]>0:
+        if True:
+            # Flip horizontally
+            face = np.fliplr(face)
+
+        face = np.array(face, dtype=np.float32)/255
+
+        return face
 
     # Hyperparameters
-    prep_denoise = False
-    prep_equalize = False
-
     train_count = batch_size
-    val_count = batch_size//4
+    val_count = batch_size
     total_count = train_count + val_count
 
-    train_positive_count = train_count//2
+    train_positive_count = train_count//4
     train_negative_count = train_count - train_positive_count
-    val_positive_count = val_count//2
+    val_positive_count = val_count//4
     val_negative_count = val_count - val_positive_count
     positive_count = train_positive_count + val_positive_count
     negative_count = train_negative_count + val_negative_count
@@ -83,11 +101,19 @@ def prepare_data():
     val_data = a[train_count:total_count, :, :, :]
     val_labels = b[train_count:total_count, :]
 
-    # Load positive data from dataset
-    count = positive_count
-    print('loading positive samples', count)
-    while count:
-        imgpath = get_a_file('positive')
+    # Load train data
+    _filelist = list()
+    for i in range(train_positive_count):
+        _filelist.append([[0, 1], get_a_file('positive')])
+    for i in range(train_negative_count):
+        _filelist.append([[1, 0], get_a_file('negative')])
+    shuffle(_filelist)
+
+    pt = 0
+    for index, value in enumerate(_filelist):
+        label = value[0]
+        imgpath = value[1]
+
         img = cv2.imread(imgpath, 1)
         if img is None:
             continue
@@ -99,43 +125,53 @@ def prepare_data():
             continue
 
         #face = img[y:y+h, x:x+w, :]
-        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=1.0, p_intensity=0.)
+        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
         face = imresize(face, shape_raw[0:2])
-        face = ImageUtilities.preprocess(face, convert_gray=None, equalize=prep_equalize, denoise=prep_denoise)
+        #face = ImageUtilities.preprocess(face, convert_gray=None, equalize=prep_equalize, denoise=prep_denoise)
         #face = tf.image.per_image_standardization(face)
         face = np.array(face, dtype=np.float32)/255
 
-        for i in range(len(b)):
-            if np.array_equal(c[i], [0, 1]) and not np.array_equal(b[i], c[i]):
-                break
-        #print(i, 'positive', imgpath)
-        a[i, :, :, :] = face
-        b[i] = c[i]
+        train_data[pt] = face
+        train_labels[pt] = label
+        pt += 1
 
-        count -= 1
+    print('data for train loaded', len(train_data))
 
-    # Load negative data
-    count = negative_count
-    print('loading negative samples', count)
-    while count:
-        imgpath = get_a_file('negative')
+    # Load validation data
+    _filelist = list()
+    for i in range(val_positive_count):
+        _filelist.append([[0, 1], get_a_file('positive')])
+    for i in range(val_negative_count):
+        _filelist.append([[1, 0], get_a_file('negative')])
+    shuffle(_filelist)
+
+    pt = 0
+    for index, value in enumerate(_filelist):
+        label = value[0]
+        imgpath = value[1]
+
         img = cv2.imread(imgpath, 1)
+        if img is None:
+            continue
         height, width, *rest = img.shape
-        crop = (height - width)//2
-        img = img[crop:crop+width, :, :]
-        img = imresize(img, shape_raw[0:2])
-        img = ImageUtilities.preprocess(img, convert_gray=None, equalize=prep_equalize, denoise=prep_denoise)
-        #img = tf.image.per_image_standardization(img)
-        img = np.array(img, dtype=np.float32)/255
+        (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
+        if w>0 and h>0:
+            pass
+        else:
+            continue
 
-        for i in range(len(b)):
-            if np.array_equal(c[i], [1, 0]) and not np.array_equal(b[i], c[i]):
-                break
-        #print(i, 'negative', f.path)
-        a[i, :, :, :] = img
-        b[i] = c[i]
+        #face = img[y:y+h, x:x+w, :]
+        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+        face = imresize(face, shape_raw[0:2])
+        #face = ImageUtilities.preprocess(face, convert_gray=None, equalize=prep_equalize, denoise=prep_denoise)
+        #face = tf.image.per_image_standardization(face)
+        face = np.array(face, dtype=np.float32)/255
 
-        count -= 1
+        val_data[pt] = face
+        val_labels[pt] = label
+        pt += 1
+
+    print('data for val loaded', len(train_data))
 
     #print(train_data.shape)
     #print(train_labels.shape)
@@ -147,11 +183,11 @@ def train(args):
     model = FaceCascade({
         'mode': 'TRAIN',
         'model_dir': '../models/cascade',
-        'ckpt_prefix': './server/models/12-net/model.ckpt',
-        'batch_size': 120,
-        'epochs': 20,
-        'steps': 2000,
-        'learn_rate': 0.0005,
+        'ckpt_prefix': '../models/cascade/checkpoint/model.ckpt',
+        'batch_size': batch_size,
+        'epochs': epochs,
+        'steps': steps,
+        'learn_rate': learn_rate,
     })
 
     # Train the model, and also write summaries.
@@ -175,7 +211,7 @@ def train(args):
 
     forward_time = 0
     forward_count = 0
-    acc_best = -1
+    acc_best = -1.
     for i in range(epochs*steps):
         if i % 10 == 0:  # Record summaries and test-set accuracy
             time_start = time.time()
@@ -187,13 +223,14 @@ def train(args):
 
             try:
                 if acc >= acc_best:
-                    save_path = saver.save(model.sess, model.params['ckpt_prefix'])
+                    save_path = model.saver.save(model.sess, model.params['ckpt_prefix'])
                     print('Model saved in path: %s' % save_path)
                     acc_best = acc
             except:
+                print('Checkpoint saving error', model.saver, model.sess, model.params['ckpt_prefix'])
                 pass
 
-            print('Accuracy at step %s: %s, time/sample: %s' % (i, acc, forward_time/forward_count))
+            print('Accuracy at step %s: %s' % (i, acc))
         else:  # Record train set summaries, and train
             if i % 100 == 99:  # Record execution stats
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)

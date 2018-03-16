@@ -7,9 +7,6 @@ class FaceCascade():
         self.model_dir = params['model_dir']
         self.log_dir = self.model_dir + '/log'
         self.ckpt_prefix = params['ckpt_prefix']
-        if tf.gfile.Exists(self.log_dir):
-            tf.gfile.DeleteRecursively(self.log_dir)
-        tf.gfile.MakeDirs(self.log_dir)
         self.model()
 
     def model(self):
@@ -32,6 +29,10 @@ class FaceCascade():
             epochs = self.params['epochs']
             steps = self.params['steps']
             learn_rate = self.params['learn_rate']
+
+            """if tf.gfile.Exists(self.log_dir):
+                tf.gfile.DeleteRecursively(self.log_dir)
+            tf.gfile.MakeDirs(self.log_dir)"""
         else:
             raise(ValueError, 'mode must be either ["INFERENCE", "TRAIN", "TEST"]')
 
@@ -168,12 +169,12 @@ class FaceCascade():
                 # the batch.
                 diff = tf.nn.softmax_cross_entropy_with_logits(labels=self.y_, logits=self.y)
                 with tf.name_scope('total'):
-                    cross_entropy = tf.reduce_mean(diff)
-            tf.summary.scalar('cross_entropy', cross_entropy)
+                    self.cross_entropy = tf.reduce_mean(diff)
+            tf.summary.scalar('cross_entropy', self.cross_entropy)
 
             with tf.name_scope('train'):
                 self.train_step = tf.train.AdamOptimizer(learn_rate).minimize(
-                    cross_entropy)
+                    self.cross_entropy)
 
         if summarize:
             print('TRAIN')

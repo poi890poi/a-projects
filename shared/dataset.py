@@ -27,6 +27,18 @@ class DatasetDownloader(metaclass=Singleton):
         for f in self.file_list:
             print(f)
 
+
+class COCO():
+    def init():
+        subset = 'val2017'
+        path_anno = '../data/coco/annotations_trainval2017/annotations/instances_'+subset+'.json'
+        self.path_source = '../data/coco/'+subset+'/'+subset
+
+        self.annotations = None
+        with open(path_anno, 'r') as f:
+            annotations = json.load(f)
+
+
 class SoF():
     def load_annotations(self, path, setname):
         self.crop_enum = ('nc', 'cr')

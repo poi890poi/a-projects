@@ -112,7 +112,8 @@ class ImageUtilities():
                 h_new *= mrate
                 w_new = w * mrate
             else:
-                raise ValueError('crop behavior not implemented yet')
+                w_new = h
+                h_new = h
         else: # Original rect too tall
             if not crop:
                 w_new = h*target_ar
@@ -151,10 +152,17 @@ class ImageUtilities():
         return (x, y, w, h)
 
     @staticmethod
+    def fit_resize(img, maxsize=[320, 200]):
+        height, width, *_ = img.shape
+        rate = min(maxsize[1]/height, maxsize[0]/width)
+        img = imresize(img, np.array([height, width], dtype=np.float)*rate)
+        return (img, rate)
+
+    @staticmethod
     def preprocess(img, convert_gray=None, equalize=True, denoise=True, maxsize=512):
         size = np.array(img.shape)
         r = 1.
-        if size[0] > maxsize or size[1] > maxsize:
+        if maxsize > 0 and (size[0] > maxsize or size[1] > maxsize):
             r = min(maxsize/size[0], maxsize/size[1])
         size = ((size.astype('float32'))*r).astype('int16')
         img = imresize(img, size)
