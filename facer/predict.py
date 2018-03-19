@@ -163,45 +163,15 @@ def val_preview(args):
     preview = args.preview
     print(preview)
     
-    subset = 'val'
-    year = '2017'
-    path_anno = '../data/coco/annotations_trainval2017/annotations/instances_'+subset+year+'.json'
-    path_source = '../data/coco/'+subset+year+'/'+subset+year
-
-    print('Loading annotations...', path_anno)
-    anno = None
-    with open(path_anno, 'r') as f:
-        anno = json.load(f)
-    print('done')
-    print()
-
-    categories = dict()
-    for ele in anno['categories']:
-        categories[ele['id']] = ele
-
-    def get_image_by_id(id):
-        for ele in anno['images']:
-            if ele['id']==id:
-                return ele
-        return None
-
-    def get_anno_by_image_id(id):
-        _annos = list()
-        for ele in anno['annotations']:
-            if ele['image_id']==id:
-                _annos.append(ele)
-        return _annos
+    path_source = '../data/face/demo'
 
     classifier = FaceClassifier()
     classifier.init(args.model)
 
-    for ele in anno['images']:
-        id = ele['id']
-        file_name = ele['file_name']
-        _annos = get_anno_by_image_id(id) 
-        #print(_annos)
+    while True:
+        f = DirectoryWalker().get_a_file(directory=path_source, filters=['.jpg'])
 
-        inpath = path_source + '/' + file_name
+        inpath = f.path
         img = cv2.imread(inpath, 1)
         img = ImageUtilities.preprocess(img, convert_gray=None, equalize=True, denoise=False, maxsize=-1)
 
@@ -210,6 +180,7 @@ def val_preview(args):
         if len(predictions):
             scores = np.array(predictions)[:, target_class:target_class+1].reshape((-1,))
             nms = tf.image.non_max_suppression(np.array(rects), scores, max_output_size=99999)
+            print('face detectd', len(nms.eval()))
             for index, value in enumerate(nms.eval()):
                 rect = rects[value]
 
@@ -408,7 +379,7 @@ class FaceClassifier(metaclass=Singleton):
         print('Precision:', self.count_correct/self.count_val)
         print('Recall:', self.count_true_positive/self.count_positive)
 
-    def multi_scale_detection(self, img):
+    def multi_scale_detection(self, img, expanding_rate=1.3):
         source = np.copy(img)
 
         timing = dict()
@@ -420,8 +391,7 @@ class FaceClassifier(metaclass=Singleton):
         stride_x = np.array([0, window_stride], dtype=np.int)
         stride_y = np.array([window_stride, 0], dtype=np.int)
         
-        enlarging_rate = 1.3
-        contracting_rate = 1./enlarging_rate
+        contracting_rate = 1./expanding_rate
         min_size = window_size[0]*3
 
         pyramid = list()

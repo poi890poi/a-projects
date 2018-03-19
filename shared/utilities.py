@@ -233,13 +233,20 @@ class ImageUtilities():
         return img
 
     @staticmethod
-    def transform_crop(rect, image, r_intensity=1.0, p_intensity=1.0):
+    def transform_crop(rect, image, r_intensity=1.0, p_intensity=1.0, g_intensity=0.):
         height, width, *rest = image.shape
         (x, y, w, h) = rect
         
         theta = 15. * r_intensity # Default rotation +/- 15 degrees as described in paper by Yann LeCun
         M = cv2.getRotationMatrix2D((x+w/2, y+h/2),
             random.triangular(-theta, theta), 1)
+
+        if g_intensity>0.:
+            # Weighted Gaussian noise for randomized lighting condition
+            gaussian = np.random.random((height, width, 1)).astype(np.float)
+            gaussian = np.repeat(gaussian[:, :], 3, axis=2)
+            g_weight = 0.25 * g_intensity
+            image = (cv2.addWeighted(image.astype(dtype=np.float), (1. - g_weight), g_weight * gaussian, g_weight, 0)).astype(np.uint8)
 
         # Rotate
         transformed = cv2.warpAffine(image, M, (width, height), borderMode=cv2.BORDER_REPLICATE)

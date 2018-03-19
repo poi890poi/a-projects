@@ -32,6 +32,11 @@ if __name__== "__main__":
         help='Display window and wait for user input, for preview.'
     )
     parser.add_argument(
+        '--nolog',
+        action='store_true',
+        help='Skip logging to save disk space during training.'
+    )
+    parser.add_argument(
         '--subset',
         type=str,
         default='',

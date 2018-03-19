@@ -19,7 +19,7 @@ n_class = 2
 batch_size = 128
 epochs = 160
 steps = 1000
-learn_rate = 0.0008
+learning_rate = 0.001
 
 prep_denoise = False
 prep_equalize = False
@@ -52,7 +52,7 @@ def prepare_data():
         shuffle(filelist['negative'])
         filelist['init'] = False
 
-    def get_a_file(set):
+    def get_a_sample(set):
         if filelist['pointer'][set] >= len(filelist[set]):
             filelist['pointer'][set] = 0
             filelist['flip'][set] *= -1
@@ -65,11 +65,13 @@ def prepare_data():
         img = cv2.imread(imgpath, 1)
         height, width, *rest = img.shape
         (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
-        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+        if set=='positive':
+            face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0.2, p_intensity=0.1, g_intensity=1.)
+        else:
+            face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
         face = imresize(face, shape_raw[0:2])
 
-        #if filelist['flip'][set]>0:
-        if True:
+        if filelist['flip'][set]>0:
             # Flip horizontally
             face = np.fliplr(face)
 
@@ -102,76 +104,30 @@ def prepare_data():
     val_labels = b[train_count:total_count, :]
 
     # Load train data
-    _filelist = list()
+    _samplelist = list()
     for i in range(train_positive_count):
-        _filelist.append([[0, 1], get_a_file('positive')])
+        _samplelist.append([[0, 1], get_a_sample('positive')])
     for i in range(train_negative_count):
-        _filelist.append([[1, 0], get_a_file('negative')])
-    shuffle(_filelist)
+        _samplelist.append([[1, 0], get_a_sample('negative')])
+    shuffle(_samplelist)
 
-    pt = 0
-    for index, value in enumerate(_filelist):
-        label = value[0]
-        imgpath = value[1]
-
-        img = cv2.imread(imgpath, 1)
-        if img is None:
-            continue
-        height, width, *rest = img.shape
-        (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
-        if w>0 and h>0:
-            pass
-        else:
-            continue
-
-        #face = img[y:y+h, x:x+w, :]
-        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
-        face = imresize(face, shape_raw[0:2])
-        #face = ImageUtilities.preprocess(face, convert_gray=None, equalize=prep_equalize, denoise=prep_denoise)
-        #face = tf.image.per_image_standardization(face)
-        face = np.array(face, dtype=np.float32)/255
-
-        train_data[pt] = face
-        train_labels[pt] = label
-        pt += 1
-
+    _labels, _data = zip(*_samplelist)
+    train_labels[:] = np.array(_labels)
+    train_data[:] = np.array(_data)
     print('data for train loaded', len(train_data))
 
     # Load validation data
-    _filelist = list()
+    _samplelist = list()
     for i in range(val_positive_count):
-        _filelist.append([[0, 1], get_a_file('positive')])
+        _samplelist.append([[0, 1], get_a_sample('positive')])
     for i in range(val_negative_count):
-        _filelist.append([[1, 0], get_a_file('negative')])
-    shuffle(_filelist)
+        _samplelist.append([[1, 0], get_a_sample('negative')])
+    shuffle(_samplelist)
 
-    pt = 0
-    for index, value in enumerate(_filelist):
-        label = value[0]
-        imgpath = value[1]
-
-        img = cv2.imread(imgpath, 1)
-        if img is None:
-            continue
-        height, width, *rest = img.shape
-        (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
-        if w>0 and h>0:
-            pass
-        else:
-            continue
-
-        #face = img[y:y+h, x:x+w, :]
-        face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
-        face = imresize(face, shape_raw[0:2])
-        #face = ImageUtilities.preprocess(face, convert_gray=None, equalize=prep_equalize, denoise=prep_denoise)
-        #face = tf.image.per_image_standardization(face)
-        face = np.array(face, dtype=np.float32)/255
-
-        val_data[pt] = face
-        val_labels[pt] = label
-        pt += 1
-
-    print('data for val loaded', len(train_data))
+    _labels, _data = zip(*_samplelist)
+    val_labels[:] = np.array(_labels)
+    val_data[:] = np.array(_data)
+    print('data for val loaded', len(val_data))
 
     #print(train_data.shape)
     #print(train_labels.shape)
@@ -187,8 +143,10 @@ def train(args):
         'batch_size': batch_size,
         'epochs': epochs,
         'steps': steps,
-        'learn_rate': learn_rate,
+        'learn_rate': 0.001, # This is no longer used and is kept for compatibility
     })
+
+    learning_rate = 0.001 # Initial learning rate
 
     # Train the model, and also write summaries.
     # Every 10th step, measure test-set accuracy, and write test summaries
@@ -203,11 +161,12 @@ def train(args):
             xs = train_data.reshape((-1,)+shape_flat)
             ys = train_labels
             k = 0.5
+            return {model.x: xs, model.y_: ys, model.keep_prob: k, model.learning_rate: learning_rate}
         else:
             xs = val_data.reshape((-1,)+shape_flat)
             ys = val_labels
             k = 1.0
-        return {model.x: xs, model.y_: ys, model.keep_prob: k}
+            return {model.x: xs, model.y_: ys, model.keep_prob: k}
 
     forward_time = 0
     forward_count = 0
@@ -219,10 +178,12 @@ def train(args):
             time_diff = time.time() - time_start
             forward_time += time_diff
             forward_count += len(val_data)
-            model.test_writer.add_summary(summary, i)
+            if not args.nolog:
+                model.test_writer.add_summary(summary, i)
 
             try:
-                if acc >= acc_best:
+                #if acc >= acc_best:
+                if True: # Save anyway as test-set is rather small and biased
                     save_path = model.saver.save(model.sess, model.params['ckpt_prefix'])
                     print('Model saved in path: %s' % save_path)
                     acc_best = acc
@@ -239,16 +200,23 @@ def train(args):
                                     feed_dict=feed_dict(True),
                                     options=run_options,
                                     run_metadata=run_metadata)
-                model.train_writer.add_run_metadata(run_metadata, 'step%03d' % i)
-                model.train_writer.add_summary(summary, i)
+                
+                if not args.nolog:
+                    model.train_writer.add_run_metadata(run_metadata, 'step%03d' % i)
+                    model.train_writer.add_summary(summary, i)
+
                 print('Adding run metadata for', i)
             else:  # Record a summary
                 summary, _ = model.sess.run([model.merged, model.train_step], feed_dict=feed_dict(True))
-                model.train_writer.add_summary(summary, i)
+                if not args.nolog: model.train_writer.add_summary(summary, i)
             if i % steps == steps-1:
                 print('Get new data')
                 print()
                 train_data, train_labels, val_data, val_labels = prepare_data()
+            if i % 2000 == 1999:
+                learning_rate = learning_rate * 0.99
+                print('learn rate decay', learning_rate)
+
     model.train_writer.close()
     model.test_writer.close()
 

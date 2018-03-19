@@ -88,6 +88,11 @@ class FaceCascade():
                 variable_summaries(biases)
             conv = tf.nn.conv2d(input, weights,
                 strides = [1, 1, 1, 1], padding = 'SAME')
+
+            # Batch  normalization
+            mean, var = tf.nn.moments(conv, [0])
+            conv = tf.nn.batch_normalization(conv, mean, var, offset=None, scale=None, variance_epsilon=1e-3)
+
             return tf.nn.relu(conv + biases)
 
         def pool(input, size, stride):
@@ -173,7 +178,8 @@ class FaceCascade():
             tf.summary.scalar('cross_entropy', self.cross_entropy)
 
             with tf.name_scope('train'):
-                self.train_step = tf.train.AdamOptimizer(learn_rate).minimize(
+                self.learning_rate = tf.placeholder(tf.float32, shape=[])
+                self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(
                     self.cross_entropy)
 
         if summarize:
