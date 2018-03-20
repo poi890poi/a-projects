@@ -175,19 +175,23 @@ var mUploadManager = function() {
                                 var rects = results['rects'];
                                 var predictions = results['predictions'];
                                 var timing = results['timing'];
+                                var ms_cnn_detect = 0;
                                 for (var k=0; k<rects.length; k++) {
                                     var rect = rects[k];
                                     var p = predictions[k];
                                     if (p[1]>p[0]) {
-                                        /*var t = acgraph.text(rect[0], rect[1]-15);
-                                        t.parent(canvas);
-                                        t.style({fontSize: '12px', color: 'lime'});
-                                        console.log(p[1]);
-                                        var confidence = Math.round(p[1]*100)/100;
-                                        t.text(confidence);*/
-                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
+                                        if (p[1]>0.95) {
+                                            /*var t = acgraph.text(rect[0], rect[1]-15);
+                                            t.parent(canvas);
+                                            t.style({fontSize: '12px', color: 'lime'});
+                                            console.log(p[1]);
+                                            var confidence = Math.round(p[1]*100)/100;
+                                            t.text(confidence);*/
+                                            canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
+                                            ms_cnn_detect++;
+                                        }
                                     } else {
-                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('red', 2);
+                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('fuchsia', 2);
                                     }
                                 }
                                 console.log(json_obj['timing']);
@@ -203,7 +207,8 @@ var mUploadManager = function() {
                                     'Total server time: '+round(t_server)+' ms<br/>'+
                                     'Image processing time (server): '+round(timing['preprocess'])+' ms<br/>'+
                                     'HOG+SVM detection time (server): '+round(timing['detect'])+' ms<br/>'+
-                                    'CNN classification time (server): '+round(timing['cnn'])+' ms<br/>'
+                                    'CNN classification time (server): '+round(timing['cnn'])+' ms<br/>' +
+                                    'Window count (positive/total): '+ms_cnn_detect+'/'+timing['window_count']+'<br/>'
                                 );
                             }
                             //$('#img-sample').attr('src', 'data:image/jpg;base64,'+media[request['requestId']]);

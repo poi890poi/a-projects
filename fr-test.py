@@ -51,7 +51,8 @@ if __name__== "__main__":
     parser.add_argument(
         '--model',
         type=str,
-        default='./server/models/12-net/model.ckpt',
+        #default='./server/models/12-net/model.ckpt',
+        default='../models/cascade/checkpoint/model.ckpt',
         help='Path and prefix of Tensorflow checkpoint.'
     )
     parser.add_argument(

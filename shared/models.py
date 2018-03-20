@@ -89,9 +89,10 @@ class FaceCascade():
             conv = tf.nn.conv2d(input, weights,
                 strides = [1, 1, 1, 1], padding = 'SAME')
 
-            # Batch  normalization
-            mean, var = tf.nn.moments(conv, [0])
-            conv = tf.nn.batch_normalization(conv, mean, var, offset=None, scale=None, variance_epsilon=1e-3)
+            """if is_train:
+                # Batch  normalization
+                mean, var = tf.nn.moments(conv, [0])
+                conv = tf.nn.batch_normalization(conv, mean, var, offset=None, scale=None, variance_epsilon=1e-3)"""
 
             return tf.nn.relu(conv + biases)
 
