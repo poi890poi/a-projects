@@ -203,11 +203,17 @@ def val(args):
     else:
         val_stats(args)
 
+target_class = 1
+
 def hnm(args):
+    # Use COCO annotations to exclude people
     print()
     count = args.count
+    if count==0: count = 2400
     subsamples_per_image = 32
     preview = False
+
+    use_dlib = True
     
     subset = args.subset
     year = '2017'
@@ -215,11 +221,17 @@ def hnm(args):
     path_source = '../data/coco/'+subset+year+'/'+subset+year
     path_target = '../data/face/'+subset+'/negative/coco'
 
+    
+    print('Restoring model', args.model)
+    classifier = FaceClassifier()
+    classifier.init(args.model)
+    print('done')
+    print()
+
     print('Loading annotations...', path_anno)
     anno = None
     with open(path_anno, 'r') as f:
         anno = json.load(f)
-    print('done')
     print()
 
     categories = dict()
@@ -244,9 +256,7 @@ def hnm(args):
             return 0
         return 1
 
-    classifier = FaceClassifier()
-    classifier.init(args.model)
-
+    print('annotated images', len(anno['images']))
     for ele in anno['images']:
         id = ele['id']
         file_name = ele['file_name']
@@ -255,27 +265,38 @@ def hnm(args):
 
         inpath = path_source + '/' + file_name
         img = cv2.imread(inpath, 1)
-        img = ImageUtilities.preprocess(img, convert_gray=None, equalize=True, denoise=False, maxsize=-1)
+        img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=-1)
 
         rects_exclude = list()
-        for _object in _annos:
-            category_id = _object['category_id']
-            category = categories[category_id]
-            #print(category)
-            bbox = _object['bbox']
-            bbox = np.array(bbox, dtype=np.int).tolist()
-            if category['supercategory']=='person':
-                if preview: cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), (0, 0, 255), 2)
+        if use_dlib:
+            # Use dlib face detector to exclude face
+            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False, maxsize=-1)
+            dlib_rects, landmarks = FaceDetector().detect(gray)
+            for r_ in dlib_rects:
+                bbox = np.array(ImageUtilities.rect_to_bb(r_), dtype=np.int).tolist()
                 rects_exclude.append(bbox)
+        else:
+            # Use COCO annotations to exclude people
+            for _object in _annos:
+                category_id = _object['category_id']
+                category = categories[category_id]
+                #print(category)
+                bbox = _object['bbox']
+                bbox = np.array(bbox, dtype=np.int).tolist()
+                if category['supercategory']=='person':
+                    if preview: cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), (0, 0, 255), 2)
+                    rects_exclude.append(bbox)
 
-        target_class = 1
         rects, predictions, timing = classifier.multi_scale_detection(img)
+
+        print('detected', len(predictions))
 
         if len(predictions)<=0:
             continue
         
         scores = np.array(predictions)[:, target_class:target_class+1].reshape((-1,))
         nms = tf.image.non_max_suppression(np.array(rects), scores, max_output_size=subsamples_per_image)
+        print('nms', len(nms.eval()))
         for index, value in enumerate(nms.eval()):
             rect = rects[value]
 
@@ -379,20 +400,19 @@ class FaceClassifier(metaclass=Singleton):
         print('Precision:', self.count_correct/self.count_val)
         print('Recall:', self.count_true_positive/self.count_positive)
 
-    def multi_scale_detection(self, img, expanding_rate=1.3):
+    def multi_scale_detection(self, img, expanding_rate=1.2, initial=48, stride=12):
         source = np.copy(img)
 
         timing = dict()
         timing['preprocess'] = 0
         timing['detect'] = 0
 
-        window_size = np.array([48, 48], dtype=np.int)
-        window_stride = 12
-        stride_x = np.array([0, window_stride], dtype=np.int)
-        stride_y = np.array([window_stride, 0], dtype=np.int)
-        
+        window_size = np.array([initial, initial], dtype=np.int)
+        stride_x = np.array([0, stride], dtype=np.int)
+        stride_y = np.array([stride, 0], dtype=np.int)
+
         contracting_rate = 1./expanding_rate
-        min_size = window_size[0]*3
+        min_size = window_size[0]*2
 
         pyramid = list()
         pyramid.append(img)
@@ -413,6 +433,9 @@ class FaceClassifier(metaclass=Singleton):
                 while True:
                     #print(window_pos)
                     # Get projection from source image
+                    if window_pos[1]+window_size[1] >= width_ or window_pos[0]+window_size[0] >= height_:
+                        break
+
                     face = np.copy(pyramid[pyramid_level][window_pos[0]:window_pos[0]+window_size[0], window_pos[1]:window_pos[1]+window_size[1], :], shape_raw[0:2])
                     window_list.append(face)
                     w = window_pos
@@ -432,7 +455,7 @@ class FaceClassifier(metaclass=Singleton):
             width_ = int(width_*contracting_rate)
             pyramid.append(imresize(pyramid[pyramid_level], [height_, width_]))
             pyramid_level += 1
-            if width_<min_size:
+            if width_ < min_size:
                 break
 
         print(len(window_list), 'subsamples')
@@ -445,9 +468,10 @@ class FaceClassifier(metaclass=Singleton):
         feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}
         predictions = self.model.sess.run(self.model.y, feed_dict)
         time_diff = time.time() - time_start
-        print(time_diff*1000, 'ms')
-        print(time_diff*1000/len(window_list), 'ms per window')
+        #print(time_diff*1000, 'ms')
+        #print(time_diff*1000/len(window_list), 'ms per window')
         timing['cnn'] = time_diff*1000
+        timing['window_count'] = len(window_list)
 
         rects_ = list()
         predictions_ = list()
@@ -469,8 +493,6 @@ class FaceClassifier(metaclass=Singleton):
             img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
 
         if img is not None:
-            return self.multi_scale_detection(img)
-
             #print(img.shape)
             src_shape = img.shape
             
@@ -492,6 +514,7 @@ class FaceClassifier(metaclass=Singleton):
             time_start = time.time()
             facelist = list()
             rects_ = list()
+            predictions_ = list()
             for rect in rects:
                 face = None
                 (x, y, w, h) = ImageUtilities.rect_to_bb(rect, mrate=mrate)
@@ -504,23 +527,35 @@ class FaceClassifier(metaclass=Singleton):
                 if face is not None:
                     facelist.append(face)
                     rects_.append([x, y, w, h])
+                    predictions_.append([0, 0])
             val_data = np.array(facelist, dtype=np.float32)/255
             reshaped = val_data.reshape((-1,)+shape_flat)
             time_diff = time.time() - time_start
             timing['crop'] = time_diff*1000
             #print('prepare data for cnn', time_diff)
 
-            time_start = time.time()
+            shape_ = img.shape
+            img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
+            ms_rects, ms_predictions, ms_timing = self.multi_scale_detection(img, expanding_rate=1.2, stride=12)
+            mrate_ = shape_[0]/img.shape[0]
+            timing['cnn'] = ms_timing['cnn']
+            timing['window_count'] = ms_timing['window_count']
+            if len(ms_predictions):
+                scores = np.array(ms_predictions)[:, target_class:target_class+1].reshape((-1,))
+                nms = tf.image.non_max_suppression(np.array(ms_rects), scores, iou_threshold=0.5, max_output_size=99999)
+                for index, value in enumerate(nms.eval()):
+                    r_ = (np.array(ms_rects[value])*mrate_).astype(dtype=np.int).tolist()
+                    p_ = ms_predictions[value]
+                    rects_.append(r_)
+                    predictions_.append(p_)
+
+            """time_start = time.time()
             feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}
             predictions = self.model.sess.run(self.model.y, feed_dict)
             time_diff = time.time() - time_start
             timing['cnn'] = time_diff*1000
             #print('cnn classify', time_diff, len(facelist))
-            #print('predictions', predictions)
-
-            predictions_ = list()
-            for p in predictions:
-                predictions_.append(p.tolist())
+            #print('predictions', predictions)"""
 
             return (rects_, predictions_, timing)
             
