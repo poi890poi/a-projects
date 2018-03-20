@@ -17,8 +17,8 @@ shape_flat = (np.prod(shape_raw),)
 shape_image = (12, 12, 3)
 n_class = 2
 batch_size = 128
-epochs = 160
-steps = 1000
+epochs = 120
+steps = 1200
 learning_rate = 0.001
 
 prep_denoise = False
@@ -66,7 +66,7 @@ def prepare_data():
         height, width, *rest = img.shape
         (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
         if set=='positive':
-            face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0.2, p_intensity=0.1, g_intensity=1.)
+            face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0., g_intensity=0.1)
         else:
             face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
         face = imresize(face, shape_raw[0:2])
@@ -181,15 +181,14 @@ def train(args):
             if not args.nolog:
                 model.test_writer.add_summary(summary, i)
 
-            try:
-                #if acc >= acc_best:
-                if True: # Save anyway as test-set is rather small and biased
+            """try:
+                if acc >= acc_best:
                     save_path = model.saver.save(model.sess, model.params['ckpt_prefix'])
-                    print('Model saved in path: %s' % save_path)
+                    #print('Model saved in path: %s' % save_path)
                     acc_best = acc
             except:
                 print('Checkpoint saving error', model.saver, model.sess, model.params['ckpt_prefix'])
-                pass
+                pass"""
 
             print('Accuracy at step %s: %s' % (i, acc))
         else:  # Record train set summaries, and train
@@ -205,6 +204,8 @@ def train(args):
                     model.train_writer.add_run_metadata(run_metadata, 'step%03d' % i)
                     model.train_writer.add_summary(summary, i)
 
+                model.saver.save(model.sess, model.params['ckpt_prefix']) # Save anyway as test-set is rather small and biased
+
                 print('Adding run metadata for', i)
             else:  # Record a summary
                 summary, _ = model.sess.run([model.merged, model.train_step], feed_dict=feed_dict(True))
@@ -216,6 +217,8 @@ def train(args):
             if i % 2000 == 1999:
                 learning_rate = learning_rate * 0.99
                 print('learn rate decay', learning_rate)
+
+    model.saver.save(model.sess, model.params['ckpt_prefix']) # Save anyway as test-set is rather small and biased
 
     model.train_writer.close()
     model.test_writer.close()
