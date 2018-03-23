@@ -159,6 +159,12 @@ class ImageUtilities():
         return (img, rate)
 
     @staticmethod
+    def is_color(img):
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        channels = cv2.split(img)
+        return np.mean(channels[1])
+
+    @staticmethod
     def preprocess(img, convert_gray=None, equalize=True, denoise=True, maxsize=512):
         size = np.array(img.shape)
         r = 1.

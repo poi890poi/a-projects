@@ -179,8 +179,8 @@ var mUploadManager = function() {
                                 for (var k=0; k<rects.length; k++) {
                                     var rect = rects[k];
                                     var p = predictions[k];
-                                    if (p[1]>p[0]) {
-                                        if (p[1]>0.95) {
+                                    if (p[1] > p[0]) {
+                                        if (p[1] > 0.98) {
                                             /*var t = acgraph.text(rect[0], rect[1]-15);
                                             t.parent(canvas);
                                             t.style({fontSize: '12px', color: 'lime'});

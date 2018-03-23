@@ -16,7 +16,7 @@ shape_raw = (48, 48, 3)
 shape_flat = (np.prod(shape_raw),)
 shape_image = (12, 12, 3)
 n_class = 2
-batch_size = 128
+batch_size = 256
 epochs = 120
 steps = 1200
 learning_rate = 0.001
@@ -144,6 +144,7 @@ def train(args):
         'epochs': epochs,
         'steps': steps,
         'learn_rate': 0.001, # This is no longer used and is kept for compatibility
+        'cascade': 2, # 1 for 12net, 2 for 24net, 3 for 48net...
     })
 
     learning_rate = 0.001 # Initial learning rate
@@ -211,12 +212,12 @@ def train(args):
                 summary, _ = model.sess.run([model.merged, model.train_step], feed_dict=feed_dict(True))
                 if not args.nolog: model.train_writer.add_summary(summary, i)
             if i % steps == steps-1:
-                print('Get new data')
                 print()
+                print('Get new data')
                 train_data, train_labels, val_data, val_labels = prepare_data()
-            if i % 2000 == 1999:
-                learning_rate = learning_rate * 0.99
+                learning_rate = learning_rate * 0.995
                 print('learn rate decay', learning_rate)
+                print()
 
     model.saver.save(model.sess, model.params['ckpt_prefix']) # Save anyway as test-set is rather small and biased
 

@@ -7,9 +7,12 @@ class FaceCascade():
         self.model_dir = params['model_dir']
         self.log_dir = self.model_dir + '/log'
         self.ckpt_prefix = params['ckpt_prefix']
-        self.model()
+        if 'cascade' in params:
+            self.model(params['cascade'])
+        else:
+            self.model()
 
-    def model(self):
+    def model(self, cascade=1):
         mode = self.params['mode']
 
         shape_raw = (48, 48, 3)
@@ -116,39 +119,42 @@ class FaceCascade():
                 fc12_1 = fully_connected_relu(flatten12, size=16)
                 fc_final = fc12_1
 
-        """with tf.variable_scope('24-net'):
-            input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
-            # Convolutions
-            with tf.variable_scope('conv1'):
-                conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
-                pool24_1 = pool(conv24_1, size=3, stride=2)
-            shape = pool24_1.get_shape().as_list()
-            flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
-            print('net-24 flatten', flatten24)
-            with tf.variable_scope('fc1'):
-                fc24_1 = fully_connected_relu(flatten24, size=128)
-            
-            fc24_concat = tf.concat([fc24_1, fc12_1], 1)
-            print('net-24 fc', fc24_1)
-            print('net-24 concat', fc24_concat)
+        if cascade >= 2:
+            print('24-net')
+            with tf.variable_scope('24-net'):
+                input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
+                # Convolutions
+                with tf.variable_scope('conv1'):
+                    conv24_1 = conv_relu(input_24, kernel_size=5, depth=64)
+                    pool24_1 = pool(conv24_1, size=3, stride=2)
+                shape = pool24_1.get_shape().as_list()
+                flatten24 = tf.reshape(pool24_1, [-1, shape[1] * shape[2] * shape[3]])
+                print('net-24 flatten', flatten24)
+                with tf.variable_scope('fc1'):
+                    fc24_1 = fully_connected_relu(flatten24, size=128)
+                
+                fc24_1 = tf.concat([fc24_1, fc12_1], 1)
+                fc_final = fc24_1
 
-        with tf.variable_scope('48-net'):
-            # Convolutions
-            with tf.variable_scope('conv1'):
-                conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
-                pool48_1 = pool(conv48_1, size=3, stride=2)
-                # Normalize, region=9
-            with tf.variable_scope('conv2'):
-                conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
-                # Normalize, region=9
-                pool48_2 = pool(conv48_2, size=3, stride=2)
-            shape = pool48_2.get_shape().as_list()
-            flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
-            with tf.variable_scope('fc1'):
-                fc48_1 = fully_connected_relu(flatten48, size=256)
-            
-            fc48_concat = tf.concat([fc48_1, fc24_concat], 1)
-            print('net-48 concat', fc48_concat)"""
+        if cascade >= 3:
+            print('48-net')
+            with tf.variable_scope('48-net'):
+                # Convolutions
+                with tf.variable_scope('conv1'):
+                    conv48_1 = conv_relu(image_shaped_input, kernel_size=5, depth=64)
+                    pool48_1 = pool(conv48_1, size=3, stride=2)
+                    # Normalize, region=9
+                with tf.variable_scope('conv2'):
+                    conv48_2 = conv_relu(pool48_1, kernel_size=5, depth=64)
+                    # Normalize, region=9
+                    pool48_2 = pool(conv48_2, size=3, stride=2)
+                shape = pool48_2.get_shape().as_list()
+                flatten48 = tf.reshape(pool48_2, [-1, shape[1] * shape[2] * shape[3]])
+                with tf.variable_scope('fc1'):
+                    fc48_1 = fully_connected_relu(flatten48, size=256)
+                
+                fc48_1 = tf.concat([fc48_1, fc24_concat], 1)
+                fc_final = fc48_1
 
         if is_train:
             with tf.variable_scope('dropout'):

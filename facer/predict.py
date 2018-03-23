@@ -540,14 +540,23 @@ class FaceClassifier(metaclass=Singleton):
             mrate_ = shape_[0]/img.shape[0]
             timing['cnn'] = ms_timing['cnn']
             timing['window_count'] = ms_timing['window_count']
+
+            use_nms = True
             if len(ms_predictions):
-                scores = np.array(ms_predictions)[:, target_class:target_class+1].reshape((-1,))
-                nms = tf.image.non_max_suppression(np.array(ms_rects), scores, iou_threshold=0.5, max_output_size=99999)
-                for index, value in enumerate(nms.eval()):
-                    r_ = (np.array(ms_rects[value])*mrate_).astype(dtype=np.int).tolist()
-                    p_ = ms_predictions[value]
-                    rects_.append(r_)
-                    predictions_.append(p_)
+                if use_nms:
+                    # Apply non-maximum-supression
+                    scores = np.array(ms_predictions)[:, target_class:target_class+1].reshape((-1,))
+                    nms = tf.image.non_max_suppression(np.array(ms_rects), scores, iou_threshold=0.5, max_output_size=99999)
+                    for index, value in enumerate(nms.eval()):
+                        r_ = (np.array(ms_rects[value])*mrate_).astype(dtype=np.int).tolist()
+                        p_ = ms_predictions[value]
+                        rects_.append(r_)
+                        predictions_.append(p_)
+                else:
+                    for index, p_ in enumerate(ms_predictions):
+                        r_ = (np.array(ms_rects[index])*mrate_).astype(dtype=np.int).tolist()
+                        rects_.append(r_)
+                        predictions_.append(p_)
 
             """time_start = time.time()
             feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}

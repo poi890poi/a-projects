@@ -14,19 +14,39 @@ source_list = {
 }
 
 def gen(args):
-    target_dir = '../data/face/val/positive/wiki'
+    #target_dir = '../data/face/val/positive/wiki'
+    subset = args.subset
+    if len(subset)==0: subset = 'wiki'
+    if subset=='sof':
+        gen_sof(args)
+        return
 
-    source_name = 'wiki'
+    target_dir = '../data/face/'+subset+'48'
+    source_name = subset
 
     components = os.path.split(source_list[source_name])
     topdir = components[0]
 
+    print('source directory', topdir)
+    print('target directory', target_dir)
+    print()
+
     dset = WikiImdb()
     dset.load_annotations(source_list[source_name], source_name)
+
+    dst_shape = [48, 48]
 
     i = 0
     while True:
         anno = dset.get_face(i)
+        photo_taken = int(anno[2])
+
+        # This annotation is incorrect
+        """if photo_taken < 1988:
+            # Skip photo too old
+            print(photo_taken)
+            continue"""
+
         for imgpath in anno[3]:
             imgpath = os.path.normpath(os.path.join(topdir, imgpath))
             img = cv2.imread(imgpath, 1)
@@ -48,15 +68,19 @@ def gen(args):
             for rect in rects:
                 (x, y, w, h) = ImageUtilities.rect_to_bb(rect, mrate=mrate)
                 height, width, *rest = img.shape
-                (x, y, w, h) = ImageUtilities.rect_fit_ar([x, y, w, h], [0, 0, width, height], 2/3, mrate=1.)
+                (x, y, w, h) = ImageUtilities.rect_fit_ar([x, y, w, h], [0, 0, width, height], dst_shape[1]/dst_shape[0], mrate=1.)
                 if w>0 and h>0:
                     face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
-                    face = imresize(face, [96, 64])
-                    face = ImageUtilities.preprocess(face, convert_gray=None)
+                    face = imresize(face, dst_shape)
+                    #face = ImageUtilities.preprocess(face, convert_gray=None)
 
-                    filename = target_dir + '/' + ImageUtilities.hash(face) + '.jpg'
-                    cv2.imwrite(filename, face)
-                    print('saved', rect)
+                    #rgb_diff = np.mean(np.absolute(np.subtract(face[:, :, 0], face[:, :, 1])))+np.mean(np.absolute(np.subtract(face[:, :, 1], face[:, :, 2])))+np.mean(np.absolute(np.subtract(face[:, :, 0], face[:, :, 2])))
+                    sat_mean = ImageUtilities.is_color(face)
+                    
+                    if sat_mean >= 48:
+                        filename = target_dir + '/' + ImageUtilities.hash(face) + '.jpg'
+                        cv2.imwrite(filename, face)
+                        print('saved', rect)
                 else:
                     pass
 
@@ -81,7 +105,8 @@ def gen(args):
         i += 1
 
 def gen_sof(args):
-    target_dir = '../data/face/val/positive/set002'
+    target_dir = '../data/face/sof48'
+    dst_shape = [48, 48]
 
     # Download data
     #DatasetDownloader().add_file('../data/face/sof', 'https://drive.google.com/file/d/0BwO0RMrZJCioaW5TdVJtOEtfYUk/view?usp=sharing', '.')
@@ -125,7 +150,7 @@ def gen_sof(args):
         if args.preview: cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
         height, width, *rest = img.shape
-        (x, y, w, h) = ImageUtilities.rect_fit_ar(anno['rect'].astype(dtype=np.int), [0, 0, width, height], 2/3, mrate=1.)
+        (x, y, w, h) = ImageUtilities.rect_fit_ar(anno['rect'].astype(dtype=np.int), [0, 0, width, height], dst_shape[1]/dst_shape[0], mrate=1.)
         if w>0 and h>0:
             if args.preview: cv2.rectangle(img, (x, y), (x + w, y + h), (255, 0, 0), 2)
         else:
@@ -142,8 +167,8 @@ def gen_sof(args):
 
         #face = img[y:y+h, x:x+w, :]
         face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
-        face = imresize(face, [96, 64])
-        face = ImageUtilities.preprocess(face, convert_gray=None)
+        face = imresize(face, dst_shape)
+        #face = ImageUtilities.preprocess(face, convert_gray=None)
 
         filename = target_dir + '/' + ImageUtilities.hash(face) + '.jpg'
         cv2.imwrite(filename, face)
