@@ -3,6 +3,7 @@ from shared.models import *
 from shared.dataset import *
 from face.dlibdetect import FaceDetector
 from mtcnn import detect_face as mtcnn_detect
+from emotion.emotion_recognition import EmotionRecognition
 
 import os.path
 import pprint
@@ -362,15 +363,24 @@ class FaceClassifier(metaclass=Singleton):
     def __init__(self):
         self.model = None
         self.sess_mtcnn = None
+        self.fxpress = None
 
-    def init(self, args):
+    def init(self, args=None):
         if self.model is None:
-            self.model = FaceCascade({
-                'mode': 'INFERENCE',
-                'model_dir': '../models/cascade',
-                'ckpt_prefix': args.model,
-                'cascade': args.cascade,
-            })
+            if args is None:
+                self.model = FaceCascade({
+                    'mode': 'INFERENCE',
+                    'model_dir': '../models/cascade',
+                    'ckpt_prefix': './server/models/12-net/model.ckpt',
+                    'cascade': 12,
+                })
+            else:
+                self.model = FaceCascade({
+                    'mode': 'INFERENCE',
+                    'model_dir': '../models/cascade',
+                    'ckpt_prefix': args.model,
+                    'cascade': args.cascade,
+                })
         self.threshold = 0.99
 
         self.count_val = 0
@@ -381,6 +391,10 @@ class FaceClassifier(metaclass=Singleton):
         if self.sess_mtcnn is None:
             self.sess_mtcnn = tf.Session()
             self.pnet, self.rnet, self.onet = mtcnn_detect.create_mtcnn(self.sess_mtcnn, None)
+
+        if self.fxpress is None:
+            self.fxpress = EmotionRecognition()
+            self.fxpress.build_network()
 
     def val(self, val_data, val_labels):
         feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}
@@ -541,16 +555,10 @@ class FaceClassifier(metaclass=Singleton):
             timing['crop'] = time_diff*1000
             #print('prepare data for cnn', time_diff)
 
+            # MTCNN
             shape_ = img.shape
             img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
-            ms_rects, ms_predictions, ms_timing = self.multi_scale_detection(img, expanding_rate=1.2, stride=12)
-            mrate_ = shape_[0]/img.shape[0]
-            timing['cnn'] = ms_timing['cnn']
-            timing['window_count'] = ms_timing['window_count']
-
-            # MTCNN
-            img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
-            mrate_ = shape_[0]/img.shape[0]
+            mrate_ = src_shape[0]/img.shape[0]
             time_start = time.time()
             minsize = 40 # minimum size of face
             threshold = [0.6, 0.7, 0.9]  # three steps's threshold
@@ -562,8 +570,20 @@ class FaceClassifier(metaclass=Singleton):
                 r_ = (np.array([b[0], b[1], b[2]-b[0], b[3]-b[1]])*mrate_).astype(dtype=np.int).tolist()
                 rects_.append(r_)
                 predictions_.append([0., 2.])
+
+                # Facial Expression
+                print('rect', b, r_)
+
             time_diff = time.time() - time_start
             timing['mtcnn'] = time_diff*1000
+
+            # Self-trained cascade face detection
+            shape_ = img.shape
+            img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
+            ms_rects, ms_predictions, ms_timing = self.multi_scale_detection(img, expanding_rate=1.2, stride=12)
+            mrate_ = src_shape[0]/img.shape[0]
+            timing['cnn'] = ms_timing['cnn']
+            timing['window_count'] = ms_timing['window_count']
 
             use_nms = True
             if len(ms_predictions):

@@ -13,6 +13,8 @@ from os.path import isfile, join
 import random
 import sys
 
+import cv2
+
 class EmotionRecognition:
 
   def __init__(self):
@@ -67,8 +69,6 @@ class EmotionRecognition:
     )
 
   def predict(self, image):
-    if image is None:
-      return None
     image = image.reshape([-1, SIZE_FACE, SIZE_FACE, 1])
     return self.model.predict(image)
 
@@ -90,7 +90,31 @@ def show_usage():
 
 def fxpress(args):
   network = EmotionRecognition()
-  import emotion.poc
+  network.build_network()
+  inpath = '../data/face/fer2013/training/06/0b3d10353f329931ffef938e127ae77c694f1405.jpg'
+
+  img = cv2.imread(inpath, 1)
+  if img is None:
+    print('Error reading image:', inpath)
+    return
+  print('input', img.shape)
+
+  def format_image(image):
+    print('format_image')
+    if len(image.shape) > 2 and image.shape[2] == 3:
+      image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+      image = cv2.imdecode(image, cv2.CV_LOAD_IMAGE_GRAYSCALE)
+    try:
+      image = cv2.resize(image, (SIZE_FACE, SIZE_FACE), interpolation = cv2.INTER_CUBIC) / 255.
+    except Exception:
+      print("[+] Problem during resize")
+      return None
+    print('shape', image.shape)
+    return image
+
+  result = network.predict(format_image(img))
+  return result
 
 if __name__ == "__main__":
   if len(sys.argv) <= 1:

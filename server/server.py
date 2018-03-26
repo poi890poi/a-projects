@@ -206,7 +206,7 @@ class PredictHandler(tornado.web.RequestHandler):
                         self.finish()
                     if service['type']=='face':
                         classifier = FaceClassifier()
-                        classifier.init('./server/models/12-net/model.ckpt')
+                        classifier.init()
                         rects, predictions, timing = classifier.detect(request['media'])
                         print(timing)
                         i = 0

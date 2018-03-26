@@ -13,6 +13,10 @@ class FaceCascade():
             self.model()
 
     def model(self, cascade=12):
+        tf.reset_default_graph() # This line is required when multiple models are used,
+                                 # otherwise error 'NotFoundError: Key is_training not found in checkpoint'
+                                 # will be encountered when restoring checkpoints
+        
         mode = self.params['mode']
 
         shape_raw = (48, 48, 3)
@@ -205,6 +209,11 @@ class FaceCascade():
             tf.global_variables_initializer().run()
 
         # Add ops to save and restore all the variables.
+        print()
+        print()
+        print('Restoring checkpoint:', self.ckpt_prefix)
+        print()
+        print()
         self.saver = tf.train.Saver(filename=self.ckpt_prefix)
 
         if is_inference:
