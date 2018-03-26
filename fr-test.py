@@ -2,6 +2,7 @@ from facer.train import *
 from facer.datagen import *
 from facer.predict import *
 from server.server import *
+from emotion.emotion_recognition import fxpress
 
 def main():
     if ARGS.test=='train':
@@ -16,6 +17,10 @@ def main():
         hnm(ARGS)
     elif ARGS.test=='val':
         val(ARGS)
+    elif ARGS.test=='fer':
+        fer(ARGS)
+    elif ARGS.test=='fxpress':
+        fxpress(ARGS)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
@@ -54,6 +59,12 @@ if __name__== "__main__":
         #default='./server/models/12-net/model.ckpt',
         default='../models/cascade/checkpoint/model.ckpt',
         help='Path and prefix of Tensorflow checkpoint.'
+    )
+    parser.add_argument(
+        '--cascade',
+        type=int,
+        default=12,
+        help='Level of cascade CNN '
     )
     parser.add_argument(
         '--annotations',

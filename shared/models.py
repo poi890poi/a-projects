@@ -12,7 +12,7 @@ class FaceCascade():
         else:
             self.model()
 
-    def model(self, cascade=1):
+    def model(self, cascade=12):
         mode = self.params['mode']
 
         shape_raw = (48, 48, 3)
@@ -119,7 +119,7 @@ class FaceCascade():
                 fc12_1 = fully_connected_relu(flatten12, size=16)
                 fc_final = fc12_1
 
-        if cascade >= 2:
+        if cascade >= 24:
             print('24-net')
             with tf.variable_scope('24-net'):
                 input_24 = tf.image.resize_bilinear(image_shaped_input, (24, 24))
@@ -136,7 +136,7 @@ class FaceCascade():
                 fc24_1 = tf.concat([fc24_1, fc12_1], 1)
                 fc_final = fc24_1
 
-        if cascade >= 3:
+        if cascade >= 48:
             print('48-net')
             with tf.variable_scope('48-net'):
                 # Convolutions

@@ -187,3 +187,37 @@ def gen_sof(args):
         i += 1
 
     return
+
+def fer(args):
+    print('fer')
+    with open('../data/face/fer2013/fer2013', 'r') as f:
+        print('open')
+        count = 255
+        for line in f:
+            if len(line) > 2000:
+                sample_ = line.split(',')
+                emotion_id = sample_[0]
+                set_ = 'default'
+                if len(sample_) > 2:
+                    set_ = sample_[2].strip().lower()
+                print(emotion_id, set_)
+
+                img = np.array(sample_[1].split()).astype(dtype=np.uint8).reshape((48, 48))
+                
+                outdir = '../data/face/fer2013/' + set_ + '/' + str(emotion_id).zfill(2)
+                if not os.path.isdir(outdir):
+                    os.makedirs(outdir)
+                outpath = outdir + '/' + ImageUtilities.hash(img) + '.jpg'
+                cv2.imwrite(outpath, img)
+
+                if args.preview:
+                    canvas = ViewportManager().open('preview', shape=[48, 48, 3], blocks=(1, 2))
+                    ViewportManager().put('preview', img, (0, 0))
+                    ViewportManager().update('preview')
+
+                    k = ViewportManager().wait_key()
+                    if k in (ViewportManager.KEY_ENTER, ViewportManager.KEY_SPACE):
+                        pass
+                
+                count -= 1
+                #if count<= 0: break

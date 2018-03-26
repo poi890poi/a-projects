@@ -2,6 +2,7 @@ from shared.utilities import *
 from shared.models import *
 from shared.dataset import *
 from face.dlibdetect import FaceDetector
+from mtcnn import detect_face as mtcnn_detect
 
 import os.path
 import pprint
@@ -114,7 +115,7 @@ def get_data():
 
 def val_stats(args):
     classifier = FaceClassifier()
-    classifier.init(args.model)
+    classifier.init(args)
 
     dir_pt = 0
     directories = [
@@ -360,13 +361,15 @@ class Singleton(type):
 class FaceClassifier(metaclass=Singleton):
     def __init__(self):
         self.model = None
+        self.sess_mtcnn = None
 
-    def init(self, model_dir):
+    def init(self, args):
         if self.model is None:
             self.model = FaceCascade({
                 'mode': 'INFERENCE',
                 'model_dir': '../models/cascade',
-                'ckpt_prefix': model_dir
+                'ckpt_prefix': args.model,
+                'cascade': args.cascade,
             })
         self.threshold = 0.99
 
@@ -374,6 +377,10 @@ class FaceClassifier(metaclass=Singleton):
         self.count_correct = 0
         self.count_positive = 0
         self.count_true_positive = 0
+
+        if self.sess_mtcnn is None:
+            self.sess_mtcnn = tf.Session()
+            self.pnet, self.rnet, self.onet = mtcnn_detect.create_mtcnn(self.sess_mtcnn, None)
 
     def val(self, val_data, val_labels):
         feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}
@@ -527,7 +534,7 @@ class FaceClassifier(metaclass=Singleton):
                 if face is not None:
                     facelist.append(face)
                     rects_.append([x, y, w, h])
-                    predictions_.append([0, 0])
+                    predictions_.append([0., 0.])
             val_data = np.array(facelist, dtype=np.float32)/255
             reshaped = val_data.reshape((-1,)+shape_flat)
             time_diff = time.time() - time_start
@@ -540,6 +547,23 @@ class FaceClassifier(metaclass=Singleton):
             mrate_ = shape_[0]/img.shape[0]
             timing['cnn'] = ms_timing['cnn']
             timing['window_count'] = ms_timing['window_count']
+
+            # MTCNN
+            img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
+            mrate_ = shape_[0]/img.shape[0]
+            time_start = time.time()
+            minsize = 40 # minimum size of face
+            threshold = [0.6, 0.7, 0.9]  # three steps's threshold
+            factor = 0.709 # scale factor
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            bounding_boxes, points = mtcnn_detect.detect_face(img, minsize, self.pnet, self.rnet, self.onet, threshold, factor)
+            nrof_faces = bounding_boxes.shape[0]
+            for b in bounding_boxes:
+                r_ = (np.array([b[0], b[1], b[2]-b[0], b[3]-b[1]])*mrate_).astype(dtype=np.int).tolist()
+                rects_.append(r_)
+                predictions_.append([0., 2.])
+            time_diff = time.time() - time_start
+            timing['mtcnn'] = time_diff*1000
 
             use_nms = True
             if len(ms_predictions):

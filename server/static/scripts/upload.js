@@ -179,7 +179,9 @@ var mUploadManager = function() {
                                 for (var k=0; k<rects.length; k++) {
                                     var rect = rects[k];
                                     var p = predictions[k];
-                                    if (p[1] > p[0]) {
+                                    if (p[1] > 1.0) {
+                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
+                                    } else if (p[1] > p[0]) {
                                         if (p[1] > 0.98) {
                                             /*var t = acgraph.text(rect[0], rect[1]-15);
                                             t.parent(canvas);
@@ -187,7 +189,7 @@ var mUploadManager = function() {
                                             console.log(p[1]);
                                             var confidence = Math.round(p[1]*100)/100;
                                             t.text(confidence);*/
-                                            canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
+                                            //canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
                                             ms_cnn_detect++;
                                         }
                                     } else {
@@ -207,7 +209,8 @@ var mUploadManager = function() {
                                     'Total server time: '+round(t_server)+' ms<br/>'+
                                     'Image processing time (server): '+round(timing['preprocess'])+' ms<br/>'+
                                     'HOG+SVM detection time (server): '+round(timing['detect'])+' ms<br/>'+
-                                    'CNN classification time (server): '+round(timing['cnn'])+' ms<br/>' +
+                                    'CNN multi-scale-detection time (server): '+round(timing['cnn'])+' ms<br/>' +
+                                    'MTCNN detection time (server): '+round(timing['mtcnn'])+' ms<br/>' +
                                     'Window count (positive/total): '+ms_cnn_detect+'/'+timing['window_count']+'<br/>'
                                 );
                             }
