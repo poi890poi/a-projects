@@ -2,21 +2,12 @@ var mUploadManager = function() {
     
     var ACCEPT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
     var STATE = Object.freeze({'Queued': 0, 'Sent': 1, 'Finish': 2, 'Error': 3});
-    var STATUS = Object.freeze({'Error': 0, 'Success': 1});
+    var STATUS = Object.freeze({'Error': 0, 'Success': 1, 'Sent': 2});
     var ERROR = Object.freeze({'NotAFile': 0, 'InvalidType': 1});
     var mEnqueueDelay = 25;
     var tEnqueue = null;
     var qu = [];
     var media = [];
-
-    // This preview is not generalized and should not be here
-    var canvas = 0;
-
-    function round(n, precision=3) {
-        var d = Math.pow(10, precision);
-        console.log(d);
-        return Math.round(n*d)/d;
-    }
 
     function enqueueList(service, filelist, callback) {
         console.log(filelist);
@@ -30,11 +21,6 @@ var mUploadManager = function() {
             } else {
                 tEnqueue = setTimeout(checkUpload, mEnqueueDelay);
             }
-        }
-
-        // This preview is not generalized and should not be here
-        if (canvas==0) {
-            canvas = acgraph.create('div-overlay');
         }
     }
 
@@ -55,7 +41,7 @@ var mUploadManager = function() {
             var rid = md5( '' + [fobj.type, fobj.name, fobj.lastModified, fobj.size].join() );
             console.log([rid, getFileById(rid)]);
             if (!getFileById(rid)) {
-                console.log('enqueue');
+                console.log('enqueue', rid);
                 qu.push({
                     rid: rid,
                     file: fobj,
@@ -63,7 +49,7 @@ var mUploadManager = function() {
                     callback: callback,
                     service: service,
                 });
-                console.log(qu);
+                console.log(qu.length, qu);
             }
         } else {
             var err = {
@@ -84,6 +70,8 @@ var mUploadManager = function() {
         clearTimeout(tEnqueue);
         tEnqueue = null;
 
+        // Get an item from the queue
+        console.log('checkUpload', qu.length);
         var quitem = null;
         while (quitem==null) {
             var quitem = qu.shift();
@@ -96,31 +84,16 @@ var mUploadManager = function() {
                 quitem = null;
             }
         }
+        console.log('qu.shift', qu.length);
 
         if (quitem) {
-            console.log(quitem);
+            //console.log('qu item', quitem);
             var reader = new FileReader();
             reader.onloadend = function() {
                 var d = new Date();
                 var base64data = reader.result;
 
-                // This preview is not generalized and should not be here
-                //media[quitem.rid] = base64data;
-                $('#div-summary').html('Waiting for sever response...');
-                canvas.remove();
-                canvas = acgraph.create('div-overlay');
-                var img = $('#img-sample');
-                img.one('load', function() {
-                    console.log('img load');
-                    var img = $('#img-sample');
-                    console.log('img', img.width(), img.height());
-                    var div = $('#div-overlay')
-                    console.log('div', div.width(), div.height());
-                    $('#div-overlay').width(img.width()).height(img.height());
-                    console.log('div set', div.width(), div.height());
-                });
-                img.attr('src', base64data);
-
+                // Compose request
                 base64data = base64data.split("base64,")[1];
                 console.log( ['onloadend', base64data.length]);
                 console.log('client_sent', performance.now());
@@ -146,6 +119,9 @@ var mUploadManager = function() {
                         "client_sent": performance.now()
                     }
                 };
+                quitem.callback(STATUS.Sent, request);
+
+                // Send AJAX
                 var postdata = JSON.stringify(request);
                 $.ajax( {
                     url: quitem.service.endpoint,
@@ -166,91 +142,19 @@ var mUploadManager = function() {
 
                         // This preview is not generalized and should not be here
                         //overlay.remove();
-                        var EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutral'];
                         for (var i=0; i<json_obj['requests'].length; i++) {
                             var request = json_obj['requests'][i];
-                            var services = request['services'];
-                            for (var j=0; j<services.length; j++) {
-                                var service = services[i];
-                                var results = service['results'];
-                                var rects = results['rects'];
-                                var predictions = results['predictions'];
-                                var timing = results['timing'];
-                                var ms_cnn_detect = 0;
-                                for (var k=0; k<rects.length; k++) {
-                                    var rect = rects[k];
-                                    var p = predictions[k];
-                                    if (p[1] > 1.0) {
-                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
-                                    } else if (p[1] > p[0]) {
-                                        if (p[1] > 0.98) {
-                                            /*var t = acgraph.text(rect[0], rect[1]-15);
-                                            t.parent(canvas);
-                                            t.style({fontSize: '12px', color: 'lime'});
-                                            console.log(p[1]);
-                                            var confidence = Math.round(p[1]*100)/100;
-                                            t.text(confidence);*/
-                                            //canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
-                                            ms_cnn_detect++;
-                                        }
-                                    } else {
-                                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('fuchsia', 2);
-                                    }
+                            var quitem_matched = getFileById(request['requestId']);
+                            //console.log('this', this);
+                            //console.log('quitem', request['requestId'], qu);
+                            console.log('request', request);
+                            if (i==json_obj['requests'].length-1) {
+                                // Send debug information in last callback
+                                request['summary'] = {
+                                    'timing': json_obj['timing']
                                 }
-                                console.log(json_obj['timing']);
-                                console.log(timing);
-                                
-                                // Display MTCNN rects and emotions
-                                var mtcnn = results['mtcnn'];
-                                var mtcnn_5p = results['mtcnn_5p'];
-                                var emotions = results['emotions'];
-                                for (var k=0; k<mtcnn.length; k++) {
-                                    var rect = mtcnn[k];
-                                    canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
-
-                                    var points = mtcnn_5p[k];
-                                    for (var l=0; l<points.length; l++) {
-                                        var p = points[l];
-                                        //console.log(p);
-                                        //canvas.circle(p[0], p[1], 3).stroke('yellow', 1);
-                                    }
-
-                                    var e = emotions[k];
-                                    console.log(['emotions', k, e]);
-                                    var emax = -1;
-                                    var emax_i = -1;
-                                    for (var l=0; l<EMOTIONS.length; l++) {
-                                        console.log(['compare', e[l], emax, emax_i, EMOTIONS[emax_i]]);
-                                        if (e[l] > emax) {
-                                            emax = e[l];
-                                            emax_i = l;
-                                        }
-                                    }
-                                    if (emax_i >= 0) {
-                                        var t = acgraph.text(rect[0], rect[1]-15);
-                                        t.parent(canvas);
-                                        t.style({fontSize: '12px', color: 'yellow'});
-                                        t.text(EMOTIONS[emax_i]);
-                                    }
-                                }
-
-                                var t_server = json_obj['timing']['server_sent']-json_obj['timing']['server_rcv'];
-                                var t_total = json_obj['timing']['client_rcv']-json_obj['timing']['client_sent'];
-                                var t_transmission = t_total-t_server;
-                                console.log(t_server, t_transmission);
-                                $('#div-summary').html(
-                                    'Faces detected: '+rects.length+'<br/>'+
-                                    'Total response time: '+round(t_total)+' ms<br/>'+
-                                    'Transmission and client time: '+round(t_transmission)+' ms<br/>'+
-                                    'Total server time: '+round(t_server)+' ms<br/>'+
-                                    'Image processing time (server): '+round(timing['preprocess'])+' ms<br/>'+
-                                    'HOG+SVM detection time (server): '+round(timing['detect'])+' ms<br/>'+
-                                    'CNN multi-scale-detection time (server): '+round(timing['cnn'])+' ms<br/>' +
-                                    'MTCNN detection time (server): '+round(timing['mtcnn'])+' ms<br/>' +
-                                    'Emotion recognition time (server): '+round(timing['emotion'])+' ms<br/>' +
-                                    'Window count (positive/total): '+ms_cnn_detect+'/'+timing['window_count']+'<br/>'
-                                );
                             }
+                            quitem_matched.callback(STATUS.Success, request);
                             //$('#img-sample').attr('src', 'data:image/jpg;base64,'+media[request['requestId']]);
                         }
 
@@ -258,6 +162,8 @@ var mUploadManager = function() {
                 } );
             }
             reader.readAsDataURL(quitem.file); 
+            quitem.state = STATE.Sent;
+            qu.push(quitem);
         } else {
             console.log('File uploading queue is empty');
         }

@@ -47,6 +47,127 @@
     <script src="../{{ cgi_prefix }}static/scripts/graphics.min.js"></script>
     <script src="../{{ cgi_prefix }}static/scripts/upload.js"></script>
     <script>
+        var face_services = function() {
+            var canvas = 0;
+            var EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutral'];
+
+            function round(n, precision=3) {
+                var d = Math.pow(10, precision);
+                return Math.round(n*d)/d;
+            }
+
+            function init() {
+                if (canvas==0) {
+                    canvas = acgraph.create('div-overlay');
+                }
+            }
+            
+            function render(request) {
+                init();
+                var services = request['services'];
+                for (var j=0; j<services.length; j++) {
+                    var service = services[j];
+                    var results = service['results'];
+                    var rects = results['rects'];
+                    var predictions = results['predictions'];
+                    var timing = results['timing'];
+                    var ms_cnn_detect = 0;
+                    for (var k=0; k<rects.length; k++) {
+                        var rect = rects[k];
+                        var p = predictions[k];
+                        if (p[1] > 1.0) {
+                            canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
+                        } else if (p[1] > p[0]) {
+                            if (p[1] > 0.98) {
+                                /*var t = acgraph.text(rect[0], rect[1]-15);
+                                t.parent(canvas);
+                                t.style({fontSize: '12px', color: 'lime'});
+                                console.log(p[1]);
+                                var confidence = Math.round(p[1]*100)/100;
+                                t.text(confidence);*/
+                                //canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
+                                ms_cnn_detect++;
+                            }
+                        } else {
+                            canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('fuchsia', 2);
+                        }
+                    }
+                    
+                    // Display MTCNN rects and emotions
+                    var mtcnn = results['mtcnn'];
+                    var mtcnn_5p = results['mtcnn_5p'];
+                    var emotions = results['emotions'];
+                    for (var k=0; k<mtcnn.length; k++) {
+                        var rect = mtcnn[k];
+                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
+
+                        var points = mtcnn_5p[k];
+                        for (var l=0; l<points.length; l++) {
+                            var p = points[l];
+                            //console.log(p);
+                            //canvas.circle(p[0], p[1], 3).stroke('yellow', 1);
+                        }
+
+                        var e = emotions[k];
+                        var emax = -1;
+                        var emax_i = -1;
+                        for (var l=0; l<EMOTIONS.length; l++) {
+                            if (e[l] > emax) {
+                                emax = e[l];
+                                emax_i = l;
+                            }
+                        }
+                        if (emax_i >= 0) {
+                            var t = acgraph.text(rect[0], rect[1]-15);
+                            t.parent(canvas);
+                            t.style({fontSize: '12px', color: 'yellow'});
+                            t.text(EMOTIONS[emax_i]);
+                        }
+                    }
+
+                    if ('summary' in request) {
+                        console.log('summary', request['summary']);
+                        var summary = request['summary'];
+                        console.log('timing', timing);
+                        var t_server = summary['timing']['server_sent'] - summary['timing']['server_rcv'];
+                        var t_total = summary['timing']['client_rcv'] - summary['timing']['client_sent'];
+                        var t_transmission = t_total-t_server;
+                        $('#div-summary').html(
+                            'Faces detected: ' + rects.length + '<br/>' +
+                            'Total response time: ' + round(t_total) + ' ms<br/>' +
+                            'Transmission and client time: ' + round(t_transmission) + ' ms<br/>' +
+                            'Total server time: ' + round(t_server) + ' ms<br/>' +
+                            'Image processing time (server): ' + round(timing['preprocess']) + ' ms<br/>' +
+                            'HOG+SVM detection time (server): ' + round(timing['detect']) + ' ms<br/>' +
+                            'CNN multi-scale-detection time (server): ' + round(timing['cnn']) + ' ms<br/>' +
+                            'MTCNN detection time (server): ' + round(timing['mtcnn']) + ' ms<br/>' +
+                            'Emotion recognition time (server): ' + round(timing['emotion']) + ' ms<br/>' +
+                            'Window count (positive/total): ' + ms_cnn_detect + '/' + timing['window_count'] + '<br/>'
+                        );
+                    }
+                }
+            }
+
+            function preview(base64data) {
+                init();
+                $('#div-summary').html('Waiting for sever response...');
+                canvas.remove();
+                canvas = acgraph.create('div-overlay');
+                var img = $('#img-sample');
+                img.one('load', function() {
+                    var img = $('#img-sample');
+                    var div = $('#div-overlay')
+                    $('#div-overlay').width(img.width()).height(img.height());
+                });
+                img.attr('src', base64data);
+            }
+            
+            return {
+                preview: preview,
+                render: render,
+            }
+        }();
+
         $( document ).ready(function() {
             $('img.error').hover( function(e) {
                     var predict = $(this).attr('data-predict').split(",");
@@ -76,7 +197,18 @@
                                 console.log('mUploadManager: Unhandled exception');
                                 console.log(response);
                             }
+                        } else if (status==mUploadManager.STATUS.Success) {
+                            console.log('success', status, response);
+                            face_services.render(response);
+                        } else if (status==mUploadManager.STATUS.Sent) {
+                            for (var i=0; i<response['requests'].length; i++) {
+                                var request = response['requests'][i];
+                                var base64img = 'data:image/jpeg;base64,' + request['media']['content'];
+                                //console.log('sent', status, base64img);
+                                face_services.preview(base64img);
+                            }
                         } else {
+                            console.log('unexpected', status, response);
                         }
                     });
                 }
