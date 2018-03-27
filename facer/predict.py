@@ -200,6 +200,100 @@ def val_preview(args):
                 pass
 
 def val(args):
+    fxpress = EmotionRecognition()
+    fxpress.build_network()
+
+    directory = '../data/face/fer2013/publictest'
+    while True:
+        f = DirectoryWalker().get_a_file(directory=directory, filters=['.jpg'])
+        if f is None: break
+        components = os.path.split(f.path)
+        label = int(os.path.split(components[0])[1])
+
+        img = cv2.imread(f.path, 0)
+        if img is None:break
+
+        emotion = np.argmax(fxpress.predict(img)[0])
+        print('emotion', label, emotion)
+
+def val_mtcnn(args):
+    classifier = FaceClassifier()
+    classifier.init(args)
+
+    dir_pt = 0
+    directories = [
+        ['../data/face/val/positive', [0., 1.]],
+        ['../data/face/val/negative', [1., 0.]],
+    ]
+
+    count_val = 0
+    count_correct = 0
+    count_true_positive = 0
+    count_positive = 0
+
+    while True:
+        directory = directories[dir_pt][0]
+        label = directories[dir_pt][1]
+        while True:
+            f = DirectoryWalker().get_a_file(directory=directory, filters=['.jpg'])
+            if f is None: break
+            img = cv2.imread(f.path, 1)
+            if img is None:break
+
+            # dlib detection
+            height, width, *rest = img.shape
+            (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
+            face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+            face = imresize(face, [48, 48])
+            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False, maxsize=-1)
+
+            dlib_rects, landmarks = FaceDetector().detect(gray)
+            
+            count_val += 1
+            if label[1]>label[0]:
+                count_positive += 1
+            if len(dlib_rects) and label[1]>label[0]:
+                count_true_positive += 1
+                count_correct += 1
+            if len(dlib_rects)==0 and label[0]>label[1]:
+                count_correct += 1
+            if count_val%1000==999:
+                print('Precision:', count_correct/count_val)
+                print('Recall:', count_true_positive/count_positive)
+                
+            # MTCNN detection
+            """height, width, *rest = img.shape
+            (x, y, w, h) = ImageUtilities.rect_fit_ar([0, 0, width, height], [0, 0, width, height], 1, mrate=1., crop=True)
+            face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+            face = imresize(face, [48, 48])
+
+            minsize = 40 # minimum size of face
+            threshold = [0.6, 0.7, 0.9]  # three steps's threshold
+            factor = 0.709 # scale factor
+            face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+            bounding_boxes, points = mtcnn_detect.detect_face(face, minsize, classifier.pnet, classifier.rnet, classifier.onet, threshold, factor)
+            
+            count_val += 1
+            if label[1]>label[0]:
+                count_positive += 1
+            if len(bounding_boxes) and label[1]>label[0]:
+                count_true_positive += 1
+                count_correct += 1
+            if len(bounding_boxes)==0 and label[0]>label[1]:
+                count_correct += 1
+            if count_val%1000==999:
+                print('Precision:', count_correct/count_val)
+                print('Recall:', count_true_positive/count_positive)"""
+
+        print('next directory')
+        dir_pt += 1
+        if dir_pt>=len(directories):
+            break
+
+        print('Precision:', count_correct/count_val)
+        print('Recall:', count_true_positive/count_positive)
+
+def val_old(args):
     if args.preview:
         val_preview(args)
     else:
@@ -397,6 +491,7 @@ class FaceClassifier(metaclass=Singleton):
             self.fxpress.build_network()
 
     def val(self, val_data, val_labels):
+        # Detect with self-trained 12-net
         feed_dict = {self.model.x: val_data.reshape((-1,)+shape_flat)}
         predictions = self.model.sess.run(self.model.y, feed_dict)
 
@@ -507,18 +602,23 @@ class FaceClassifier(metaclass=Singleton):
         
     def detect(self, media):
         timing = dict()
+        result = dict({
+            'mtcnn': list(),
+            'mtcnn_5p': list(),
+            'emotions': list(),
+        })
         #print(media)
-        img = None
+        src_img = None
         if 'content' in media:
             bindata = base64.b64decode(media['content'].encode())
-            img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
+            src_img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
 
-        if img is not None:
+        if src_img is not None:
             #print(img.shape)
-            src_shape = img.shape
+            src_shape = src_img.shape
             
             time_start = time.time()
-            gray = ImageUtilities.preprocess(img, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False, maxsize=384)
+            gray = ImageUtilities.preprocess(src_img, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False, maxsize=384)
             time_diff = time.time() - time_start
             timing['preprocess'] = time_diff*1000
             #print('preprocess', time_diff)
@@ -536,13 +636,14 @@ class FaceClassifier(metaclass=Singleton):
             facelist = list()
             rects_ = list()
             predictions_ = list()
+            # Crop faces from source image
             for rect in rects:
                 face = None
                 (x, y, w, h) = ImageUtilities.rect_to_bb(rect, mrate=mrate)
-                height, width, *rest = img.shape
+                height, width, *rest = src_img.shape
                 (x, y, w, h) = ImageUtilities.rect_fit_ar([x, y, w, h], [0, 0, width, height], 1., mrate=1.)
                 if w>0 and h>0:
-                    face = ImageUtilities.transform_crop((x, y, w, h), img, r_intensity=0., p_intensity=0.)
+                    face = ImageUtilities.transform_crop((x, y, w, h), src_img, r_intensity=0., p_intensity=0.)
                     face = imresize(face, shape_raw[0:2])
                     #face = ImageUtilities.preprocess(face, convert_gray=None)
                 if face is not None:
@@ -556,8 +657,7 @@ class FaceClassifier(metaclass=Singleton):
             #print('prepare data for cnn', time_diff)
 
             # MTCNN
-            shape_ = img.shape
-            img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
+            img = ImageUtilities.preprocess(src_img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
             mrate_ = src_shape[0]/img.shape[0]
             time_start = time.time()
             minsize = 40 # minimum size of face
@@ -565,21 +665,53 @@ class FaceClassifier(metaclass=Singleton):
             factor = 0.709 # scale factor
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             bounding_boxes, points = mtcnn_detect.detect_face(img, minsize, self.pnet, self.rnet, self.onet, threshold, factor)
-            nrof_faces = bounding_boxes.shape[0]
-            for b in bounding_boxes:
-                r_ = (np.array([b[0], b[1], b[2]-b[0], b[3]-b[1]])*mrate_).astype(dtype=np.int).tolist()
-                rects_.append(r_)
-                predictions_.append([0., 2.])
-
-                # Facial Expression
-                print('rect', b, r_)
+            
+            if len(bounding_boxes):
+                points = np.array(points) * mrate_
+                points = points.reshape(2, -1)
+                points = np.transpose(points)
+                points = points.reshape((len(bounding_boxes), -1, 2))
 
             time_diff = time.time() - time_start
             timing['mtcnn'] = time_diff*1000
+            timing['emotion'] = 0
+            print()
+            print()
+            print('result len', len(bounding_boxes), len(points))
+            nrof_faces = bounding_boxes.shape[0]
+            for i, b in enumerate(bounding_boxes):
+                r_ = (np.array([b[0], b[1], b[2]-b[0], b[3]-b[1]])*mrate_).astype(dtype=np.int).tolist()
+                result['mtcnn'].append(r_ + [int(b[4]*1000),])
+                result['mtcnn_5p'].append(points[i].astype(dtype=np.int).tolist())
+                #rects_.append(r_)
+                #predictions_.append([0., 2.])
+
+                # Facial Expression
+                time_start = time.time()
+                (x, y, w, h) = ImageUtilities.rect_fit_ar(r_, [0, 0, src_shape[1], src_shape[0]], 1., crop=False)
+                if w>0 and h>0:
+                    face = ImageUtilities.transform_crop((x, y, w, h), src_img, r_intensity=0., p_intensity=0.)
+                    #face = imresize(face, shape_raw[0:2])
+                    #face = ImageUtilities.preprocess(face, convert_gray=cv2.COLOR_RGB2YCrCb, equalize=False, denoise=False)
+                    face = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+                    cv2.imwrite('./face.jpg', face)
+                    #face = np.array(face, dtype=np.float32)/255
+                    face = cv2.resize(face, (48, 48), interpolation = cv2.INTER_CUBIC) / 255.
+                if face is not None:
+                    emotions = self.fxpress.predict(face)[0]
+                    print('emotion', face.shape, emotions)
+                    result['emotions'].append((np.array(emotions)*1000).astype(dtype=np.int).tolist())
+                time_diff = time.time() - time_start
+                timing['emotion'] += time_diff*1000
+                    
+                print('rect', b, r_)
+            print('emotions', result['emotions'])
+            print('mtcnn_5p', result['mtcnn_5p'])
+            print()
+            print()
 
             # Self-trained cascade face detection
-            shape_ = img.shape
-            img = ImageUtilities.preprocess(img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
+            img = ImageUtilities.preprocess(src_img, convert_gray=None, equalize=False, denoise=False, maxsize=384)
             ms_rects, ms_predictions, ms_timing = self.multi_scale_detection(img, expanding_rate=1.2, stride=12)
             mrate_ = src_shape[0]/img.shape[0]
             timing['cnn'] = ms_timing['cnn']
@@ -610,5 +742,5 @@ class FaceClassifier(metaclass=Singleton):
             #print('cnn classify', time_diff, len(facelist))
             #print('predictions', predictions)"""
 
-            return (rects_, predictions_, timing)
+            return (rects_, predictions_, timing, result)
             

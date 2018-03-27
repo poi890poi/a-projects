@@ -207,7 +207,7 @@ class PredictHandler(tornado.web.RequestHandler):
                     if service['type']=='face':
                         classifier = FaceClassifier()
                         classifier.init()
-                        rects, predictions, timing = classifier.detect(request['media'])
+                        rects, predictions, timing, fdetect_result = classifier.detect(request['media'])
                         print(timing)
                         i = 0
                         for rect in rects:
@@ -216,6 +216,9 @@ class PredictHandler(tornado.web.RequestHandler):
                         service['results'] = {
                             'rects': rects,
                             'predictions': predictions,
+                            'mtcnn': fdetect_result['mtcnn'],
+                            'mtcnn_5p': fdetect_result['mtcnn_5p'],
+                            'emotions': fdetect_result['emotions'],
                             'timing': timing,
                         }
                 request['media'] = ''

@@ -166,6 +166,7 @@ var mUploadManager = function() {
 
                         // This preview is not generalized and should not be here
                         //overlay.remove();
+                        var EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutral'];
                         for (var i=0; i<json_obj['requests'].length; i++) {
                             var request = json_obj['requests'][i];
                             var services = request['services'];
@@ -198,6 +199,41 @@ var mUploadManager = function() {
                                 }
                                 console.log(json_obj['timing']);
                                 console.log(timing);
+                                
+                                // Display MTCNN rects and emotions
+                                var mtcnn = results['mtcnn'];
+                                var mtcnn_5p = results['mtcnn_5p'];
+                                var emotions = results['emotions'];
+                                for (var k=0; k<mtcnn.length; k++) {
+                                    var rect = mtcnn[k];
+                                    canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
+
+                                    var points = mtcnn_5p[k];
+                                    for (var l=0; l<points.length; l++) {
+                                        var p = points[l];
+                                        //console.log(p);
+                                        //canvas.circle(p[0], p[1], 3).stroke('yellow', 1);
+                                    }
+
+                                    var e = emotions[k];
+                                    console.log(['emotions', k, e]);
+                                    var emax = -1;
+                                    var emax_i = -1;
+                                    for (var l=0; l<EMOTIONS.length; l++) {
+                                        console.log(['compare', e[l], emax, emax_i, EMOTIONS[emax_i]]);
+                                        if (e[l] > emax) {
+                                            emax = e[l];
+                                            emax_i = l;
+                                        }
+                                    }
+                                    if (emax_i >= 0) {
+                                        var t = acgraph.text(rect[0], rect[1]-15);
+                                        t.parent(canvas);
+                                        t.style({fontSize: '12px', color: 'yellow'});
+                                        t.text(EMOTIONS[emax_i]);
+                                    }
+                                }
+
                                 var t_server = json_obj['timing']['server_sent']-json_obj['timing']['server_rcv'];
                                 var t_total = json_obj['timing']['client_rcv']-json_obj['timing']['client_sent'];
                                 var t_transmission = t_total-t_server;
@@ -211,6 +247,7 @@ var mUploadManager = function() {
                                     'HOG+SVM detection time (server): '+round(timing['detect'])+' ms<br/>'+
                                     'CNN multi-scale-detection time (server): '+round(timing['cnn'])+' ms<br/>' +
                                     'MTCNN detection time (server): '+round(timing['mtcnn'])+' ms<br/>' +
+                                    'Emotion recognition time (server): '+round(timing['emotion'])+' ms<br/>' +
                                     'Window count (positive/total): '+ms_cnn_detect+'/'+timing['window_count']+'<br/>'
                                 );
                             }

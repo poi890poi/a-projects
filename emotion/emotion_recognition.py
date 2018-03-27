@@ -14,6 +14,8 @@ import random
 import sys
 
 import cv2
+from shared.utilities import DirectoryWalker
+import os.path
 
 class EmotionRecognition:
 
@@ -37,9 +39,12 @@ class EmotionRecognition:
     self.network = regression(self.network,
       optimizer = 'momentum',
       loss = 'categorical_crossentropy')
+
+    checkpoint_path = SAVE_DIRECTORY + '/emotion_recognition'
+    print('checkpoint_path', checkpoint_path)
     self.model = tflearn.DNN(
       self.network,
-      checkpoint_path = SAVE_DIRECTORY + '/emotion_recognition',
+      checkpoint_path = checkpoint_path,
       max_checkpoints = 1,
       tensorboard_verbose = 2
     )
@@ -50,15 +55,57 @@ class EmotionRecognition:
     print('[+] Dataset found and loaded')
 
   def start_training(self):
-    self.load_saved_dataset()
     self.build_network()
+    """self.load_saved_dataset()
     if self.dataset is None:
-      self.load_saved_dataset()
+      self.load_saved_dataset()"""
+
+    # Load training data
+    data_sources = [
+      ['../data/face/fer2013/privatetest', 'val'],
+      ['../data/face/fer2013/training', 'train'],
+    ]
+      
+    train_data = list()
+    train_labels = list()
+    val_data = list()
+    val_labels = list()
+    for source in data_sources:
+      while True:
+          f = DirectoryWalker().get_a_file(directory=source[0], filters=['.jpg'])
+          if f is None: break
+          img = cv2.imread(f.path, 0)
+          if img is None:break
+
+          components = os.path.split(f.path)
+          label = int(os.path.split(components[0])[1])
+          components = os.path.split(components[0])
+          subset = os.path.split(components[0])[1]
+          #print(subset, label)
+
+          img = (img.astype(dtype=np.float))/255
+
+          if subset=='privatetest':
+            val_data.append(img)
+            val_labels.append(label)
+          elif subset=='training':
+            train_data.append(img)
+            train_labels.append(label)
+
+    train_data = np.array(train_data).reshape((-1, 48, 48, 1))
+    onehot = np.zeros((len(train_labels), 7))
+    onehot[np.arange(len(train_labels)), train_labels] = 1
+    train_labels = onehot
+    val_data = np.array(val_data).reshape((-1, 48, 48, 1))
+    onehot = np.zeros((len(val_labels), 7))
+    onehot[np.arange(len(val_labels)), val_labels] = 1
+    val_labels = onehot
+
     # Training
     print('[+] Training network')
     self.model.fit(
-      self.dataset.images, self.dataset.labels,
-      validation_set = (self.dataset.images_test, self.dataset._labels_test),
+      train_data, train_labels,
+      validation_set = (val_data, val_labels),
       n_epoch = 100,
       batch_size = 50,
       shuffle = True,
@@ -80,6 +127,8 @@ class EmotionRecognition:
     if isfile(join(SAVE_DIRECTORY, SAVE_MODEL_FILENAME)):
       self.model.load(join(SAVE_DIRECTORY, SAVE_MODEL_FILENAME))
       print('[+] Model loaded from ' + SAVE_MODEL_FILENAME)
+    else:
+      print('Model not found!', SAVE_DIRECTORY, SAVE_MODEL_FILENAME)
 
 
 def show_usage():
@@ -115,6 +164,11 @@ def fxpress(args):
 
   result = network.predict(format_image(img))
   return result
+
+def fxpress_train(args):
+  network = EmotionRecognition()
+  network.start_training()
+  network.save_model()
 
 if __name__ == "__main__":
   if len(sys.argv) <= 1:

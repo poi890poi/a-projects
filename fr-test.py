@@ -2,7 +2,7 @@ from facer.train import *
 from facer.datagen import *
 from facer.predict import *
 from server.server import *
-from emotion.emotion_recognition import fxpress
+from emotion.emotion_recognition import fxpress, fxpress_train
 
 def main():
     if ARGS.test=='train':
@@ -21,6 +21,8 @@ def main():
         fer(ARGS)
     elif ARGS.test=='fxpress':
         fxpress(ARGS)
+    elif ARGS.test=='fxpress_train':
+        fxpress_train(ARGS)
 
 if __name__== "__main__":
     parser = argparse.ArgumentParser(description="""\
