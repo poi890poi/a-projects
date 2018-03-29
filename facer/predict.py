@@ -4,6 +4,7 @@ from shared.dataset import *
 from face.dlibdetect import FaceDetector
 from mtcnn import detect_face as mtcnn_detect
 from emotion.emotion_recognition import EmotionRecognition
+from facer.emotion import EmotionClassifier
 
 import os.path
 import pprint
@@ -458,6 +459,7 @@ class FaceClassifier(metaclass=Singleton):
         self.model = None
         self.sess_mtcnn = None
         self.fxpress = None
+        self.emoc = None
 
     def init(self, args=None):
         if self.model is None:
@@ -486,9 +488,13 @@ class FaceClassifier(metaclass=Singleton):
             self.sess_mtcnn = tf.Session()
             self.pnet, self.rnet, self.onet = mtcnn_detect.create_mtcnn(self.sess_mtcnn, None)
 
-        if self.fxpress is None:
+        """if self.fxpress is None:
             self.fxpress = EmotionRecognition()
-            self.fxpress.build_network()
+            self.fxpress.build_network()"""
+
+        if self.emoc is None:
+            self.emoc = EmotionClassifier()
+            self.emoc.build_network(args)
 
     def val(self, val_data, val_labels):
         # Detect with self-trained 12-net
@@ -698,7 +704,8 @@ class FaceClassifier(metaclass=Singleton):
                     #face = np.array(face, dtype=np.float32)/255
                     face = cv2.resize(face, (48, 48), interpolation = cv2.INTER_CUBIC) / 255.
                 if face is not None:
-                    emotions = self.fxpress.predict(face)[0]
+                    #emotions = self.fxpress.predict(face)[0]
+                    emotions = self.emoc.predict(face)
                     print('emotion', face.shape, emotions)
                     result['emotions'].append((np.array(emotions)*1000).astype(dtype=np.int).tolist())
                 time_diff = time.time() - time_start

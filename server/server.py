@@ -9,8 +9,12 @@ from pathlib import Path
 import pickle
 import datetime
 import json
+import base64
+import cv2
+import numpy as np
 
 from facer.predict import FaceClassifier
+from facer.face_app import FaceApplications
 
 class Singleton(type):
     _instances = {}
@@ -170,6 +174,28 @@ class PredictHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
         self.set_header('Content-Type', 'application/json')
 
+    def __format_image(self, media):
+        """
+        - Convert portable text media to pixel array
+        - Object media is JSON compliant
+        - Object media has one of the members:
+          'url' - URL to an online source
+          'content' - Base 64 encoded JPEG data
+        - Formatted pixel array for CNN is in RGB channel order
+        - Formatted pixel array for CNN has dtype=np.float
+        - Formatted pixel array for CNN has pixel values normalized to range [0, 1]
+        """
+        img = None
+        if 'content' in media:
+            bindata = base64.b64decode(media['content'].encode())
+            img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
+        elif 'url' in media:
+            raise(NotImplementedError)
+            pass
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = (img.astype(np.float)) / 255.
+        return img
+
     def post(self):
         #self.get_argument('username')
         if self.request.body:
@@ -186,9 +212,16 @@ class PredictHandler(tornado.web.RequestHandler):
                 message = 'Unable to parse JSON'
                 self.send_error(400, message=message) # Bad Request
                 self.finish()
-            json_data['timing']['server_rcv'] = time.time()*1000
+            json_data['timing']['server_rcv'] = time.time() * 1000
 
             print()
+            """
+            - One or multiple predict request could be included in single HTTP POST
+            - Each predict request has only one 'media', which contains an image
+            - Each predict request requests one or multiple services
+            - For each service, 'type' and 'model' must be specified
+            - For each service type, options are type dependent
+            """
             if 'requests' not in json_data:
                 message = "Requests must be enclosed in 'requests' attribute as a list of request"
                 self.send_error(400, message=message) # Bad Request
@@ -198,13 +231,36 @@ class PredictHandler(tornado.web.RequestHandler):
                     message = "Services must be enclosed in 'services' attribute for request "+request['requestId']
                     self.send_error(400, message=message) # Bad Request
                     self.finish()
+
+                img = None
+
                 for service in request['services']:
                     print(service)
+                    service_timing = {}
+
                     if 'type' not in service:
                         message = "'type' attribute must be specified for service"
                         self.send_error(400, message=message) # Bad Request
                         self.finish()
-                    if service['type']=='face':
+
+                    t_ = time.time()
+                    if img is None: img = self.__format_image(request['media'])
+                    if img is None:
+                        self.send_error(400, message="Invalid 'media'") # Bad Request
+                        self.finish()
+                    service_timing['decode_img'] = (time.time() - t_) * 1000
+                    
+                    if service['type']=='_void':
+                        service['results'] = {
+                            'timing': service_timing,
+                        }
+                    elif service['type']=='face_':
+                        face_app = FaceApplications()
+                        predictions = face_app.detect(img, params={
+                            'service': service,
+                        })
+                        service['results'] = predictions
+                    elif service['type']=='face':
                         classifier = FaceClassifier()
                         classifier.init()
                         rects, predictions, timing, fdetect_result = classifier.detect(request['media'])
@@ -228,7 +284,6 @@ class PredictHandler(tornado.web.RequestHandler):
         #self.response = json_data
         #print(self.response)
         json_data['timing']['server_sent'] = time.time()*1000
-        print(json_data)
         self.write(json.dumps(json_data))
         self.finish()
 

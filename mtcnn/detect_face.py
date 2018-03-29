@@ -316,13 +316,16 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
         minl = minl*factor
         factor_count += 1
 
+    #im_data = (im_data-127.5)*0.0078125
+    img = (img - 0.5) * 2.
+
     # first stage
     for j in range(len(scales)):
         scale=scales[j]
         hs=int(np.ceil(h*scale))
         ws=int(np.ceil(w*scale))
         im_data = imresample(img, (hs, ws))
-        im_data = (im_data-127.5)*0.0078125
+        #im_data = (im_data-127.5)*0.0078125
         img_x = np.expand_dims(im_data, 0)
         img_y = np.transpose(img_x, (0,2,1,3))
         out = pnet(img_y)
@@ -363,7 +366,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
                 tempimg[:,:,:,k] = imresample(tmp, (24, 24))
             else:
                 return np.empty()
-        tempimg = (tempimg-127.5)*0.0078125
+        #tempimg = (tempimg-127.5)*0.0078125
         tempimg1 = np.transpose(tempimg, (3,1,0,2))
         out = rnet(tempimg1)
         out0 = np.transpose(out[0])
@@ -391,7 +394,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
                 tempimg[:,:,:,k] = imresample(tmp, (48, 48))
             else:
                 return np.empty()
-        tempimg = (tempimg-127.5)*0.0078125
+        #tempimg = (tempimg-127.5)*0.0078125
         tempimg1 = np.transpose(tempimg, (3,1,0,2))
         out = onet(tempimg1)
         out0 = np.transpose(out[0])
@@ -418,6 +421,8 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
 
 
 def bulk_detect_face(images, detection_window_size_ratio, pnet, rnet, onet, threshold, factor):
+    print('bulk_detect_face')
+    print()
     # im: input image
     # minsize: minimum of faces' size
     # pnet, rnet, onet: caffemodel
@@ -760,7 +765,7 @@ def rerec(bboxA):
     return bboxA
 
 def imresample(img, sz):
-    im_data = cv2.resize(img, (sz[1], sz[0]), interpolation=cv2.INTER_AREA) #@UndefinedVariable
+    im_data = cv2.resize(img, (sz[1], sz[0]), interpolation=cv2.INTER_NEAREST) #@UndefinedVariable
     return im_data
 
     # This method is kept for debugging purpose

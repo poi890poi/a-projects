@@ -27,6 +27,7 @@
             position: relative;
         }
         div.img_overlay {
+            opacity: 0.75;
             float: left;
             position: absolute;
             left: 0px;
@@ -50,6 +51,9 @@
         var face_services = function() {
             var canvas = 0;
             var EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutral'];
+            var scaling = 1.0;
+            var res_cap = 448;
+            var factor = 0.6;
 
             function round(n, precision=3) {
                 var d = Math.pow(10, precision);
@@ -65,84 +69,75 @@
             function render(request) {
                 init();
                 var services = request['services'];
-                for (var j=0; j<services.length; j++) {
-                    var service = services[j];
+                for (var i=0; i<services.length; i++) {
+                    var service = services[i];
                     var results = service['results'];
-                    var rects = results['rects'];
-                    var predictions = results['predictions'];
-                    var timing = results['timing'];
-                    var ms_cnn_detect = 0;
-                    for (var k=0; k<rects.length; k++) {
-                        var rect = rects[k];
-                        var p = predictions[k];
-                        if (p[1] > 1.0) {
-                            canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
-                        } else if (p[1] > p[0]) {
-                            if (p[1] > 0.98) {
-                                /*var t = acgraph.text(rect[0], rect[1]-15);
-                                t.parent(canvas);
-                                t.style({fontSize: '12px', color: 'lime'});
-                                console.log(p[1]);
-                                var confidence = Math.round(p[1]*100)/100;
-                                t.text(confidence);*/
-                                //canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('lime', 2);
-                                ms_cnn_detect++;
-                            }
-                        } else {
-                            canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('fuchsia', 2);
-                        }
-                    }
-                    
-                    // Display MTCNN rects and emotions
-                    var mtcnn = results['mtcnn'];
-                    var mtcnn_5p = results['mtcnn_5p'];
-                    var emotions = results['emotions'];
-                    for (var k=0; k<mtcnn.length; k++) {
-                        var rect = mtcnn[k];
-                        canvas.rect(rect[0], rect[1], rect[2], rect[3]).stroke('yellow', 2);
 
-                        var points = mtcnn_5p[k];
-                        for (var l=0; l<points.length; l++) {
-                            var p = points[l];
-                            //console.log(p);
-                            //canvas.circle(p[0], p[1], 3).stroke('yellow', 1);
-                        }
+                    console.log('results', results);
+                    // Display MTCNN rectangles and emotions
+                    if ('rectangles' in results) {
+                        var rectangles = results['rectangles'];
+                        for (var j=0; j<rectangles.length; j++) {
+                            var r = rectangles[j];
+                            r[0] = r[0] * face_services.scaling;
+                            r[1] = r[1] * face_services.scaling;
+                            r[2] = r[2] * face_services.scaling;
+                            r[3] = r[3] * face_services.scaling;
+                            canvas.rect(r[0], r[1], r[2], r[3]).stroke('fuchsia', 2);
 
-                        var e = emotions[k];
-                        var emax = -1;
-                        var emax_i = -1;
-                        for (var l=0; l<EMOTIONS.length; l++) {
-                            if (e[l] > emax) {
-                                emax = e[l];
-                                emax_i = l;
+                            if ('landmarks' in results) {
+                                landmarks = results['landmarks'][j];
+                                for (var k=0; k<landmarks.length; k++) {
+                                    var p = landmarks[k];
+                                    p[0] = p[0] * face_services.scaling;
+                                    p[1] = p[1] * face_services.scaling;
+                                    canvas.circle(p[0], p[1], 1).stroke('black', 2);
+                                }
                             }
-                        }
-                        if (emax_i >= 0) {
-                            var t = acgraph.text(rect[0], rect[1]-15);
-                            t.parent(canvas);
-                            t.style({fontSize: '12px', color: 'yellow'});
-                            t.text(EMOTIONS[emax_i]);
+
+                            if ('emotions' in results) {
+                                e = results['emotions'][j];
+                                var emax = -1;
+                                var emax_i = -1;
+                                for (var k=0; k<EMOTIONS.length; k++) {
+                                    //console.log('compare', l, e, e[l], emax);
+                                    if (e[k] > emax) {
+                                        emax = e[k];
+                                        emax_i = k;
+                                    }
+                                }
+                                //console.log('emotions', EMOTIONS, emotions, emax_i);
+                                if (emax_i >= 0) {
+                                    var t = acgraph.text(r[0], r[1]-15);
+                                    t.parent(canvas);
+                                    t.style({fontSize: '12px', color: 'fuchsia'});
+                                    t.text(EMOTIONS[emax_i]);
+                                }
+                            }
+
                         }
                     }
 
+                    if ('timing' in results) {
+                        var timing = results['timing'];
+                    }
                     if ('summary' in request) {
                         console.log('summary', request['summary']);
                         var summary = request['summary'];
                         console.log('timing', timing);
                         var t_server = summary['timing']['server_sent'] - summary['timing']['server_rcv'];
                         var t_total = summary['timing']['client_rcv'] - summary['timing']['client_sent'];
-                        var t_transmission = t_total-t_server;
+                        var t_transmission = t_total - t_server;
                         $('#div-summary').html(
-                            'Faces detected: ' + rects.length + '<br/>' +
                             'Total response time: ' + round(t_total) + ' ms<br/>' +
                             'Transmission and client time: ' + round(t_transmission) + ' ms<br/>' +
                             'Total server time: ' + round(t_server) + ' ms<br/>' +
-                            'Image processing time (server): ' + round(timing['preprocess']) + ' ms<br/>' +
-                            'HOG+SVM detection time (server): ' + round(timing['detect']) + ' ms<br/>' +
-                            'CNN multi-scale-detection time (server): ' + round(timing['cnn']) + ' ms<br/>' +
+                            'Image processing time (server): ' + round(timing['fit_resize']) + ' ms<br/>' +
                             'MTCNN detection time (server): ' + round(timing['mtcnn']) + ' ms<br/>' +
-                            'Emotion recognition time (server): ' + round(timing['emotion']) + ' ms<br/>' +
-                            'Window count (positive/total): ' + ms_cnn_detect + '/' + timing['window_count'] + '<br/>'
+                            'Resolution cap: ' + res_cap + '<br/>' +
+                            'Faces detected: ' + rectangles.length + '<br/>' +
+                            'Image processing time (server): ' + round(timing['emoc_prepare']) + ' ms<br/>' +
+                            'Emotion recognition time (server): ' + round(timing['emoc']) + ' ms<br/>'
                         );
                     }
                 }
@@ -155,6 +150,8 @@
                 canvas = acgraph.create('div-overlay');
                 var img = $('#img-sample');
                 img.one('load', function() {
+                    face_services.scaling = this.clientWidth / this.naturalWidth;
+                    console.log('naturalWidth', this.naturalWidth, this.clientWidth, face_services.scaling);
                     var img = $('#img-sample');
                     var div = $('#div-overlay')
                     $('#div-overlay').width(img.width()).height(img.height());
@@ -165,6 +162,9 @@
             return {
                 preview: preview,
                 render: render,
+                round: round,
+                res_cap: res_cap,
+                factor: factor,
             }
         }();
 
@@ -186,8 +186,17 @@
                 }
             );
 
-            $('#file_upload').change( function (e) {
-                    mUploadManager.enqueueList({type: 'face', model: '12-net', endpoint: '../{{ cgi_prefix }}predict'}, $(this), function (status, response) {
+            $('#file-upload-face').change( function (e) {
+                    mUploadManager.enqueueList({
+                            endpoint: '../{{ cgi_prefix }}predict',
+                            services: [
+                                //{type: 'face_', model: 'mtcnn'},
+                                {type: 'face_', model: 'alexnet-emoc', options: {
+                                    'factor': face_services.factor,
+                                    'res_cap': face_services.res_cap
+                                }}
+                            ]
+                        }, $(this), function (status, response) {
                         if (status==mUploadManager.STATUS.Error) {
                             if (response.code==mUploadManager.ERROR.NotAFile) {
                                 console.log('mUploadManager: Not a file');
@@ -213,6 +222,48 @@
                     });
                 }
             );
+
+            $('#file-upload-void').change( function (e) {
+                    mUploadManager.enqueueList({
+                            endpoint: '../{{ cgi_prefix }}predict',
+                            services: [
+                                {type: '_void', model: ''}
+                            ]
+                        }, $(this), function (status, response) {
+                        if (status==mUploadManager.STATUS.Error) {
+                            if (response.code==mUploadManager.ERROR.NotAFile) {
+                                console.log('mUploadManager: Not a file');
+                            } else if (response.code==mUploadManager.ERROR.InvalidType) {
+                                console.log('mUploadManager: Unaccepted file type ' + response.fobj.type);
+                            } else {
+                                console.log('mUploadManager: Unhandled exception');
+                                console.log(response);
+                            }
+                        } else if (status==mUploadManager.STATUS.Success) {
+                            console.log('success', status, response);
+                            if ('summary' in response) {
+                                var summary = response['summary'];
+                                var t_server = summary['timing']['server_sent'] - summary['timing']['server_rcv'];
+                                var t_total = summary['timing']['client_rcv'] - summary['timing']['client_sent'];
+                                var t_transmission = t_total - t_server;
+                                $('#div-summary-void').html(
+                                    'Total response time: ' + face_services.round(t_total) + ' ms<br/>' +
+                                    'Transmission and client time: ' + face_services.round(t_transmission) + ' ms<br/>' +
+                                    'Total server time: ' + face_services.round(t_server) + ' ms<br/>'
+                                );
+                            }
+                        } else if (status==mUploadManager.STATUS.Sent) {
+                            console.log('sent', status, response);
+                            var requests = response['requests'];
+                            for (var i=0; i<requests.length; i++) {
+                                var request = requests[i];
+                            }
+                        } else {
+                            console.log('unexpected', status, response);
+                        }
+                    });
+                }
+            );
         });
     </script>
     <body>
@@ -224,47 +275,33 @@
         <div class="main_panel">
             <h2>Arobot Computer Vision Services</h2>
 
+            <div>
             <h3>Face Detection and Classification</h3>
-                <form id="form_upload" action="$action" enctype="multipart/form-data" method="post">
+                <form action="$action" enctype="multipart/form-data" method="post">
                     Upload files...
                     <input type="hidden" name="MAX_FILE_SIZE" value="30000" />
-                    <input type="file" id="file_upload" name="upload" multiple="multiple"><br/>
+                    <input type="file" id="file-upload-face" name="upload" multiple="multiple"><br/>
                 </form>
 
                 <div style="width: 100%; display: table;">
                     <div id="div-results" class="container">
-                        <div id="div-overlay" class="img_overlay" style="width: 400px; height: 400px;"></div>
-                        <img id="img-sample"></img>
+                        <div id="div-overlay" class="img_overlay" style="width: 400px; height: 0px;"></div>
+                        <img id="img-sample" style="max-width: 512px;"></img>
                     </div>
                     <div id="div-summary" style="display: table-cell; width: 360px; padding: 5px; vertical-align: top;"></div>
                 </div>
+            </div>
 
-            <h3>Model</h3>
-                <ul>
-                    <li>Name: 12-net
-                    <li>Input: 12x12x3
-                    <li>Activation: ReLU
-                    <li>Batch normalization: No
-                    <li>Initializer: Xavier
-                    <li>Optimizer: Adam
-                </ul>
-            
-            <h3>Training</h3>
-                <ul>
-                    <li>Training set: SoF + LFW
-                    <li>Training size: 4,800 samples (50-50 faces and non-faces)
-                    <li>Batch size: 240
-                    <li>Steps: 2,000 per batch
-                    <li>Learning rate: 0.0005
-                </ul>
-            
-            <h3>Validation</h3>
-                <ul>
-                    <li>Validation set: WIKI
-                    <li>Precision: 93.15%
-                    <li>Recall: 89.5%
-                </ul>
-            
+            <div>
+            <h3>Networking and Sanity Check</h3>
+                <form action="$action" enctype="multipart/form-data" method="post">
+                    Upload files...
+                    <input type="hidden" name="MAX_FILE_SIZE" value="30000" />
+                    <input type="file" id="file-upload-void" name="upload" multiple="multiple"><br/>
+                </form>
+                <div id="div-summary-void"></div>
+            </div>
+
             <!--
             <h3>Method</h3>
             <ul>

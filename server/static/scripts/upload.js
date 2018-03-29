@@ -9,13 +9,13 @@ var mUploadManager = function() {
     var qu = [];
     var media = [];
 
-    function enqueueList(service, filelist, callback) {
+    function enqueueList(params, filelist, callback) {
         console.log(filelist);
         var files = filelist.get(0).files;
         for (var i=0; i<files.length; i++ ) {
             var fobj = files[i]
             //console.log(fobj);
-            enqueueSingle(service, fobj, callback);
+            enqueueSingle(params, fobj, callback);
             if (tEnqueue) {
                 // Do nothing
             } else {
@@ -33,7 +33,7 @@ var mUploadManager = function() {
         return null;
     }
 
-    function enqueueSingle(service, fobj, callback) {
+    function enqueueSingle(params, fobj, callback) {
         //console.log(['enqueueSingle', fobj]);
         //console.log(fobj instanceof File);
         //console.log(['type', fobj.type, ACCEPT_TYPES.indexOf(fobj.type)]);
@@ -47,7 +47,7 @@ var mUploadManager = function() {
                     file: fobj,
                     state: STATE.Queued,
                     callback: callback,
-                    service: service,
+                    params: params,
                 });
                 console.log(qu.length, qu);
             }
@@ -80,7 +80,8 @@ var mUploadManager = function() {
                 break;
             }
             if (quitem.state!=STATE.Queued) {
-                qu.push(quitem.slice(0));
+                console.log('state', quitem.state);
+                //qu.push(quitem);
                 quitem = null;
             }
         }
@@ -104,15 +105,7 @@ var mUploadManager = function() {
                             "media" : {
                                 "content" : base64data
                             },
-                            "services" : [
-                                {
-                                    "type" : quitem.service.type,
-                                    "model" : quitem.service.model,
-                                    "options" : {
-                                        "resultsLimit" : 5,
-                                    },
-                                }
-                            ]
+                            "services" : quitem.params['services']
                         }
                     ],
                     "timing": {
@@ -124,7 +117,7 @@ var mUploadManager = function() {
                 // Send AJAX
                 var postdata = JSON.stringify(request);
                 $.ajax( {
-                    url: quitem.service.endpoint,
+                    url: quitem.params['endpoint'],
                     type: 'POST',
                     dataType : "json",
                     contentType : 'application/json; charset=utf-8',

@@ -83,13 +83,15 @@ class EmotionRecognition:
           subset = os.path.split(components[0])[1]
           #print(subset, label)
 
-          img = (img.astype(dtype=np.float))/255
+          img = (img.astype(dtype=np.float32))/255
 
           if subset=='privatetest':
             val_data.append(img)
             val_labels.append(label)
           elif subset=='training':
             train_data.append(img)
+            train_labels.append(label)
+            train_data.append(np.fliplr(img))
             train_labels.append(label)
 
     train_data = np.array(train_data).reshape((-1, 48, 48, 1))

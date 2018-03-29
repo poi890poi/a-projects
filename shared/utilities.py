@@ -99,6 +99,39 @@ class ImageUtilities():
         return np.copy(img[0:height, 0:width, :])
 
     @staticmethod
+    def rect_fit_points(points, target_ar=1., expand=2.):
+        x = np.min(points[:, 0:1])
+        y = np.min(points[:, 1:2])
+        w = np.max(points[:, 0:1]) - x
+        h = np.max(points[:, 1:2]) - y
+
+        scaling = [1., 1.]
+        s_ = target_ar * h / w
+        if s_ > 1:
+            scaling[0] = s_
+        else:
+            scaling[1] = 1. / s_
+        w_ = (w * scaling[0] * expand - w) / 2.
+        h_ = (h * scaling[1] * expand - h) / 2.
+        x -= w_
+        y -= h_
+        w += w_ * 2.
+        h += h_ * 2.
+
+        return (x, y, w, h)
+
+    @staticmethod
+    def fit_resize(img, maxsize=(320, 200)):
+        height, width, *_ = img.shape
+        scaling = min(maxsize[1]/height, maxsize[0]/width, 1.)
+
+        # scipy.misc.imresize changes range [min, max] of pixel values and MUST be avoided when pixel array is used as input for CNN
+        #img = imresize(img, (np.array([height, width], dtype=np.float)*scaling).astype(dtype=np.int), interp='bilinear')
+        img = cv2.resize(img, tuple((np.array([width, height], dtype=np.float)*scaling).astype(dtype=np.int)), interpolation=cv2.INTER_NEAREST)
+
+        return (img, scaling)
+
+    @staticmethod
     def rect_fit_ar(rect, bound, target_ar, mrate=1.0, crop=False):
         # Default behavior is to contain original rectangle. Specify crop=True to crop instead.
         x = rect[0]
@@ -150,13 +183,6 @@ class ImageUtilities():
             h = int(h/mrate[0])
     
         return (x, y, w, h)
-
-    @staticmethod
-    def fit_resize(img, maxsize=[320, 200]):
-        height, width, *_ = img.shape
-        rate = min(maxsize[1]/height, maxsize[0]/width)
-        img = imresize(img, np.array([height, width], dtype=np.float)*rate)
-        return (img, rate)
 
     @staticmethod
     def is_color(img):
@@ -270,7 +296,10 @@ class ImageUtilities():
             [w - 1, h - 1],
             [0, h - 1]], dtype = "float32")
         M = cv2.getPerspectiveTransform(rect, dst)
-        transformed = cv2.warpPerspective(transformed, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        if p_intensity==0:
+            transformed = cv2.warpPerspective(transformed, M, (w, h), borderMode=cv2.BORDER_CONSTANT)
+        else:
+            transformed = cv2.warpPerspective(transformed, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
 
         return transformed
 
