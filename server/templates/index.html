@@ -52,8 +52,30 @@
             var canvas = 0;
             var EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutral'];
             var scaling = 1.0;
-            var res_cap = 448;
-            var factor = 0.6;
+            var options = {};
+
+            function set_options(profile) {
+                console.log('set_options', profile);
+                if (profile=='balance') {
+                    this.options = {
+                        'res_cap': 448,
+                        'factor': 0.6,
+                        'interp': 'NEAREST'
+                    };
+                } else if (profile=='speed') {
+                    this.options = {
+                        'res_cap': 384,
+                        'factor': 0.5,
+                        'interp': 'NEAREST'
+                    };
+                } else if (profile=='precision') {
+                    this.options = {
+                        'res_cap': 1024,
+                        'factor': 0.9,
+                        'interp': 'LINEAR'
+                    };
+                }
+            }
 
             function round(n, precision=3) {
                 var d = Math.pow(10, precision);
@@ -134,7 +156,7 @@
                             'Total server time: ' + round(t_server) + ' ms<br/>' +
                             'Image processing time (server): ' + round(timing['fit_resize']) + ' ms<br/>' +
                             'MTCNN detection time (server): ' + round(timing['mtcnn']) + ' ms<br/>' +
-                            'Resolution cap: ' + res_cap + '<br/>' +
+                            'Options: ' + JSON.stringify(this.options) + '<br/>' +
                             'Faces detected: ' + rectangles.length + '<br/>' +
                             'Image processing time (server): ' + round(timing['emoc_prepare']) + ' ms<br/>' +
                             'Emotion recognition time (server): ' + round(timing['emoc']) + ' ms<br/>'
@@ -163,12 +185,14 @@
                 preview: preview,
                 render: render,
                 round: round,
-                res_cap: res_cap,
-                factor: factor,
+                options: options,
+                set_options: set_options
             }
         }();
 
         $( document ).ready(function() {
+            face_services.set_options('balance');
+
             $('img.error').hover( function(e) {
                     var predict = $(this).attr('data-predict').split(",");
                     var img = $($('#div-classes .thumbnail').get(parseInt(predict[0])));
@@ -186,15 +210,21 @@
                 }
             );
 
+            $('#profile-face').change( function (e) {
+                    var profile = $(this).val();
+                    face_services.set_options(profile);
+                    console.log('set_options', profile, face_services.options);
+                }
+            );
+
             $('#file-upload-face').change( function (e) {
+                    console.log('');
+                    console.log('options', face_services.options);
                     mUploadManager.enqueueList({
                             endpoint: '../{{ cgi_prefix }}predict',
                             services: [
                                 //{type: 'face_', model: 'mtcnn'},
-                                {type: 'face_', model: 'alexnet-emoc', options: {
-                                    'factor': face_services.factor,
-                                    'res_cap': face_services.res_cap
-                                }}
+                                {type: 'face_', model: 'alexnet-emoc', options: face_services.options}
                             ]
                         }, $(this), function (status, response) {
                         if (status==mUploadManager.STATUS.Error) {
@@ -281,6 +311,12 @@
                     Upload files...
                     <input type="hidden" name="MAX_FILE_SIZE" value="30000" />
                     <input type="file" id="file-upload-face" name="upload" multiple="multiple"><br/>
+                    Profile
+                    <select id="profile-face">
+                        <option value="speed">speed</option>
+                        <option value="balance" selected="selected">balance</option>
+                        <option value="precision">precision</option>
+                    </select><br/>
                 </form>
 
                 <div style="width: 100%; display: table;">

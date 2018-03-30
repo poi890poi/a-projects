@@ -121,13 +121,13 @@ class ImageUtilities():
         return (x, y, w, h)
 
     @staticmethod
-    def fit_resize(img, maxsize=(320, 200)):
+    def fit_resize(img, maxsize=(320, 200), interpolation=cv2.INTER_NEAREST):
         height, width, *_ = img.shape
         scaling = min(maxsize[1]/height, maxsize[0]/width, 1.)
 
         # scipy.misc.imresize changes range [min, max] of pixel values and MUST be avoided when pixel array is used as input for CNN
         #img = imresize(img, (np.array([height, width], dtype=np.float)*scaling).astype(dtype=np.int), interp='bilinear')
-        img = cv2.resize(img, tuple((np.array([width, height], dtype=np.float)*scaling).astype(dtype=np.int)), interpolation=cv2.INTER_NEAREST)
+        img = cv2.resize(img, tuple((np.array([width, height], dtype=np.float)*scaling).astype(dtype=np.int)), interpolation=interpolation)
 
         return (img, scaling)
 

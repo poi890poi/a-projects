@@ -295,7 +295,7 @@ def create_mtcnn(sess, model_path):
     onet_fun = lambda img : sess.run(('onet/conv6-2/conv6-2:0', 'onet/conv6-3/conv6-3:0', 'onet/prob1:0'), feed_dict={'onet/input:0':img})
     return pnet_fun, rnet_fun, onet_fun
 
-def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
+def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation=cv2.INTER_NEAREST):
     # im: input image
     # minsize: minimum of faces' size
     # pnet, rnet, onet: caffemodel
@@ -324,7 +324,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
         scale=scales[j]
         hs=int(np.ceil(h*scale))
         ws=int(np.ceil(w*scale))
-        im_data = imresample(img, (hs, ws))
+        im_data = imresample(img, (hs, ws), interpolation=interpolation)
         #im_data = (im_data-127.5)*0.0078125
         img_x = np.expand_dims(im_data, 0)
         img_y = np.transpose(img_x, (0,2,1,3))
@@ -363,7 +363,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
             tmp = np.zeros((int(tmph[k]),int(tmpw[k]),3))
             tmp[dy[k]-1:edy[k],dx[k]-1:edx[k],:] = img[y[k]-1:ey[k],x[k]-1:ex[k],:]
             if tmp.shape[0]>0 and tmp.shape[1]>0 or tmp.shape[0]==0 and tmp.shape[1]==0:
-                tempimg[:,:,:,k] = imresample(tmp, (24, 24))
+                tempimg[:,:,:,k] = imresample(tmp, (24, 24), interpolation=interpolation)
             else:
                 return np.empty()
         #tempimg = (tempimg-127.5)*0.0078125
@@ -391,7 +391,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
             tmp = np.zeros((int(tmph[k]),int(tmpw[k]),3))
             tmp[dy[k]-1:edy[k],dx[k]-1:edx[k],:] = img[y[k]-1:ey[k],x[k]-1:ex[k],:]
             if tmp.shape[0]>0 and tmp.shape[1]>0 or tmp.shape[0]==0 and tmp.shape[1]==0:
-                tempimg[:,:,:,k] = imresample(tmp, (48, 48))
+                tempimg[:,:,:,k] = imresample(tmp, (48, 48), interpolation=interpolation)
             else:
                 return np.empty()
         #tempimg = (tempimg-127.5)*0.0078125
@@ -419,7 +419,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor):
                 
     return total_boxes, points
 
-
+"""
 def bulk_detect_face(images, detection_window_size_ratio, pnet, rnet, onet, threshold, factor):
     print('bulk_detect_face')
     print()
@@ -642,7 +642,7 @@ def bulk_detect_face(images, detection_window_size_ratio, pnet, rnet, onet, thre
         i += onet_input_count
 
     return ret
-
+"""
 
 # function [boundingbox] = bbreg(boundingbox,reg)
 def bbreg(boundingbox,reg):
@@ -764,8 +764,8 @@ def rerec(bboxA):
     bboxA[:,2:4] = bboxA[:,0:2] + np.transpose(np.tile(l,(2,1)))
     return bboxA
 
-def imresample(img, sz):
-    im_data = cv2.resize(img, (sz[1], sz[0]), interpolation=cv2.INTER_NEAREST) #@UndefinedVariable
+def imresample(img, sz, interpolation=cv2.INTER_NEAREST):
+    im_data = cv2.resize(img, (sz[1], sz[0]), interpolation=interpolation) #@UndefinedVariable
     return im_data
 
     # This method is kept for debugging purpose

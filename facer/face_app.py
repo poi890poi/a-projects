@@ -57,16 +57,24 @@ class FaceApplications(VisionApplications):
 
     def __get_detector_create(self):
         if self.__mtcnn is None:
+            print()
+            os.stdout.write('Loading MTCNN model for face detection...')
             self.__mtcnn = {}
             self.__mtcnn['session'] = tf.Session()
             #self.__pnet, self.__rnet, self.__onet = FaceDetector.create_mtcnn(self.__mtcnn, None)
             self.__mtcnn['pnet'], self.__mtcnn['rnet'], self.__mtcnn['onet'] = FaceDetector.create_mtcnn(self.__mtcnn['session'], None)
+            os.stdout.write('done')
+            print()
         return self.__mtcnn
 
     def __get_emotion_classifier_create(self):
         if self.__emoc is None:
+            print()
+            os.stdout.write('Loading 4-layers AlexNet model for emotion classifier...')
             self.__emoc = EmotionClassifier()
             self.__emoc.build_network(None)
+            os.stdout.write('done')
+            print()
         return self.__emoc
 
     def detect(self, img, params):
@@ -89,17 +97,28 @@ class FaceApplications(VisionApplications):
             # Limit image size for performance
             print('service', service)
             t_ = time.time()
+
+            # Prepare parameters
             res_cap = 384
             factor = 0.709
+            interp = cv2.INTER_NEAREST
             if 'options' in service:
                 options = service['options']
                 if 'res_cap' in options:
                     res_cap = int(options['res_cap'])
                 if 'factor' in options:
                     factor = float(options['factor'])
+                if 'interp' in options:
+                    if options['interp']=='LINEAR':
+                        interp = cv2.INTER_LINEAR
+                    elif options['interp']=='AREA':
+                        interp = cv2.INTER_AREA
             if res_cap > 512: res_cap = 512
-            print('factor', factor)
-            resized, scale_factor = imutil.fit_resize(img, maxsize=(res_cap, res_cap))
+            print('options', factor, interp)
+            
+            # This is a safe guard to avoid very large image,
+            # for best performance, client is responsible to scale the image before upload
+            resized, scale_factor = imutil.fit_resize(img, maxsize=(res_cap, res_cap), interpolation=interp)
             scale_factor = 1. / scale_factor
             predictions['timing']['fit_resize'] = (time.time() - t_) * 1000
 
@@ -113,7 +132,7 @@ class FaceApplications(VisionApplications):
             pnet = detector['pnet']
             rnet = detector['rnet']
             onet = detector['onet']
-            extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor)
+            extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
             predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
 
             if len(extents):
@@ -159,7 +178,7 @@ class FaceApplications(VisionApplications):
                         w = w - x_
                     face[y_:y_+h, x_:x_+w, :] = img[y:y+h, x:x+w, :]
 
-                    face = cv2.resize(face, (48, 48), interpolation = cv2.INTER_NEAREST)
+                    face = cv2.resize(face, (48, 48), interpolation = interp)
                     face = (face[:, :, 0:1] * 0.2126 + face[:, :, 1:2] * 0.7152 + face[:, :, 2:3] * 0.0722).reshape((48, 48))
                     #face_write = (face * 255.).astype(np.uint8)
                     #cv2.imwrite('./face'+str(i).zfill(3)+'.jpg', face_write)
