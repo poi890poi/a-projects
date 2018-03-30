@@ -2,6 +2,7 @@ from mtcnn import detect_face as FaceDetector
 from facer.emotion import EmotionClassifier
 from shared.utilities import ImageUtilities as imutil
 
+import sys
 import time
 import numpy as np
 import cv2
@@ -58,22 +59,22 @@ class FaceApplications(VisionApplications):
     def __get_detector_create(self):
         if self.__mtcnn is None:
             print()
-            os.stdout.write('Loading MTCNN model for face detection...')
+            sys.stdout.write('Loading MTCNN model for face detection...')
             self.__mtcnn = {}
             self.__mtcnn['session'] = tf.Session()
             #self.__pnet, self.__rnet, self.__onet = FaceDetector.create_mtcnn(self.__mtcnn, None)
             self.__mtcnn['pnet'], self.__mtcnn['rnet'], self.__mtcnn['onet'] = FaceDetector.create_mtcnn(self.__mtcnn['session'], None)
-            os.stdout.write('done')
+            sys.stdout.write('done')
             print()
         return self.__mtcnn
 
     def __get_emotion_classifier_create(self):
         if self.__emoc is None:
             print()
-            os.stdout.write('Loading 4-layers AlexNet model for emotion classifier...')
+            sys.stdout.write('Loading 4-layers AlexNet model for emotion classifier...')
             self.__emoc = EmotionClassifier()
             self.__emoc.build_network(None)
-            os.stdout.write('done')
+            sys.stdout.write('done')
             print()
         return self.__emoc
 
