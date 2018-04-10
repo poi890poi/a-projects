@@ -1,12 +1,16 @@
 from mtcnn import detect_face as FaceDetector
 from facer.emotion import EmotionClassifier
 from shared.utilities import ImageUtilities as imutil
+from shared.utilities import DirectoryWalker as dirwalker
 
 import sys
 import time
 import numpy as np
 import cv2
 import tensorflow as tf
+import os.path
+import pathlib
+import math
 
 """
 - Array plane is (custom) defined as coordinate system of y (row) before x (col),
@@ -100,8 +104,8 @@ class FaceApplications(VisionApplications):
             t_ = time.time()
 
             # Prepare parameters
-            res_cap = 384
-            factor = 0.709
+            res_cap = 448
+            factor = 0.6
             interp = cv2.INTER_NEAREST
             if 'options' in service:
                 options = service['options']
@@ -114,7 +118,11 @@ class FaceApplications(VisionApplications):
                         interp = cv2.INTER_LINEAR
                     elif options['interp']=='AREA':
                         interp = cv2.INTER_AREA
-            if res_cap > 512: res_cap = 512
+            if factor > 0.9: factor = 0.9
+            elif factor < 0.45: factor = 0.45
+            # For performance reason, resolution is hard-capped at 800, which is suitable for most applications
+            if res_cap > 800: res_cap = 800
+            elif res_cap <= 0: res_cap = 448 # In case client fail to initialize res_cap yet included options in request
             print('options', factor, interp)
             
             # This is a safe guard to avoid very large image,
@@ -136,14 +144,16 @@ class FaceApplications(VisionApplications):
             extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
             predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
 
-            if len(extents):
+            if len(landmarks):
+                landmarks = np.array(landmarks) * scale_factor
+            """if len(extents):
                 _ = np.array(landmarks) * scale_factor
                 _ = _.reshape(2, -1)
                 _ = np.transpose(_)
                 _ = _.reshape((-1, len(extents), 2))
-                landmarks = np.swapaxes(_, 0, 1)
+                landmarks = np.swapaxes(_, 0, 1)"""
 
-            if model=='alexnet-emoc':
+            if model=='a-emoc':
                 facelist = np.zeros((len(extents), 48, 48), dtype=np.float)
                 predictions['timing']['emoc_prepare'] = 0
             
@@ -154,7 +164,7 @@ class FaceApplications(VisionApplications):
                 predictions['confidences'].append(int(e[4]*1000))
                 plist_ = landmarks[i].astype(dtype=np.int).tolist()
                 predictions['landmarks'].append(plist_)
-                if model=='alexnet-emoc':
+                if model=='a-emoc':
                     t_ = time.time()
                     #(x, y, w, h) = imutil.rect_fit_ar(r_, [0, 0, img.shape[1], img.shape[0]], 1., crop=False)
                     (x, y, w, h) = imutil.rect_fit_points(landmarks[i], )
@@ -186,7 +196,7 @@ class FaceApplications(VisionApplications):
                     facelist[i:i+1, :, :] = face
                     predictions['timing']['emoc_prepare'] += (time.time() - t_) * 1000
 
-            if model=='alexnet-emoc':
+            if model=='a-emoc':
                 t_ = time.time()
                 emoc_ = self.__get_emotion_classifier_create()
                 emotions = emoc_.predict(facelist)
@@ -198,6 +208,83 @@ class FaceApplications(VisionApplications):
             pass
 
         return predictions
+
+    def align_dataset(self, directory=None):
+        if directory is None:
+            directory = '../data/face/fer2013_raw'
+
+        stats = {
+            'count': 0,
+            'left': [0., 0.],
+            'right': [0., 0.],
+            'low': [0., 0.],
+        }
+
+        while True:
+            f = dirwalker().get_a_file(directory=directory, filters=['.jpg'])
+            if f is None: break
+
+            img = cv2.imread(f.path, 1)
+            if img is None:break
+            img = (img.astype(dtype=np.float32))/255
+
+            detector = self.__get_detector_create()
+            pnet = detector['pnet']
+            rnet = detector['rnet']
+            onet = detector['onet']
+            extents, landmarks = FaceDetector.detect_face(img, 48, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=0.5)
+
+            if len(landmarks) and len(landmarks[0]):
+                left_eye = np.array(landmarks[0][0], dtype=np.float)
+                right_eye = np.array(landmarks[0][1], dtype=np.float)
+                nose = np.array(landmarks[0][2], dtype=np.float)
+                mouth = (np.array(landmarks[0][3], dtype=np.float) + np.array(landmarks[0][4], dtype=np.float))/2.
+                low_center = (np.array(landmarks[0][2], dtype=np.float) + np.array(landmarks[0][3], dtype=np.float) + np.array(landmarks[0][4], dtype=np.float)) / 3.
+
+                eye_center = (right_eye+left_eye) / 2.
+                vv = nose - eye_center
+                vv = vv / math.sqrt(vv[0]*vv[0] + vv[1]*vv[1])
+                vh = (right_eye - left_eye)
+                vh = vh / math.sqrt(vh[0]*vh[0] + vh[1]*vh[1])
+
+                corners = np.array(
+                   [low_center - vv*35 - vh*24,
+                    low_center - vv*35 + vh*24,
+                    low_center + vv*13 + vh*24,
+                    low_center + vv*13 - vh*24,],
+                    dtype= np.float)
+
+                print(corners)
+
+                # Affine transformation
+                rect = np.array(corners, dtype = "float32")
+                dst = np.array([[0, 0], [47, 0], [47, 47], [0, 47]], dtype = "float32")
+                rect = (rect+dst) / 2.
+                M = cv2.getPerspectiveTransform(rect, dst)
+                warpped = cv2.warpPerspective(img, M, (48, 48), borderMode=cv2.BORDER_CONSTANT)
+
+                outpath = f.path.replace('fer2013_raw', 'fer2013_aligned')
+                if outpath != f.path:
+                    outdir = os.path.split(outpath)[0]
+                    pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(outpath, warpped*255)
+
+                """# Statitics of positions of eyes and nose
+                stats['count'] += 1
+                count = stats['count']
+
+                stats['left'][0] = stats['left'][0]*(count-1)/count + left_eye[0]/count
+                stats['left'][1] = stats['left'][1]*(count-1)/count + left_eye[1]/count
+                stats['right'][0] = stats['right'][0]*(count-1)/count + right_eye[0]/count
+                stats['right'][1] = stats['right'][1]*(count-1)/count + right_eye[1]/count
+                stats['low'][0] = stats['low'][0]*(count-1)/count + low_center[0]/count
+                stats['low'][1] = stats['low'][1]*(count-1)/count + low_center[1]/count
+
+                print(stats)"""
+
+            else:
+                pass
+
 
 if __name__== "__main__":
     face_app = FaceApplications()

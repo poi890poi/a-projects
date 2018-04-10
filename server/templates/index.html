@@ -65,14 +65,14 @@
                 } else if (profile=='speed') {
                     this.options = {
                         'res_cap': 384,
-                        'factor': 0.5,
+                        'factor': 0.55,
                         'interp': 'NEAREST'
                     };
                 } else if (profile=='precision') {
                     this.options = {
-                        'res_cap': 1024,
-                        'factor': 0.9,
-                        'interp': 'LINEAR'
+                        'res_cap': 640,
+                        'factor': 0.5,
+                        'interp': 'AREA'
                     };
                 }
             }
@@ -107,6 +107,8 @@
                             r[3] = r[3] * face_services.scaling;
                             canvas.rect(r[0], r[1], r[2], r[3]).stroke('fuchsia', 2);
 
+                            // Draw landmarks
+                            /*
                             if ('landmarks' in results) {
                                 landmarks = results['landmarks'][j];
                                 for (var k=0; k<landmarks.length; k++) {
@@ -116,6 +118,7 @@
                                     canvas.circle(p[0], p[1], 1).stroke('black', 2);
                                 }
                             }
+                            */
 
                             if ('emotions' in results) {
                                 e = results['emotions'][j];
@@ -219,12 +222,19 @@
 
             $('#file-upload-face').change( function (e) {
                     console.log('');
-                    console.log('options', face_services.options);
+                    var options = face_services.options
+                    var service;
+                    if (options['res_cap']==448 && options['factor']==0.6 && options['interp']=='NEAREST') {
+                        // Omit options if all values are default
+                        service = {type: 'face', model: 'a-emoc'};
+                    } else {
+                        service = {type: 'face', model: 'a-emoc', options: options};
+                    }
                     mUploadManager.enqueueList({
                             endpoint: '../{{ cgi_prefix }}predict',
                             services: [
                                 //{type: 'face_', model: 'mtcnn'},
-                                {type: 'face_', model: 'alexnet-emoc', options: face_services.options}
+                                service
                             ]
                         }, $(this), function (status, response) {
                         if (status==mUploadManager.STATUS.Error) {
@@ -249,9 +259,9 @@
 
                             console.log('');
                             console.log('');
-                            console.log('SENT', status, JSON.stringify(response));
-                            console.log('');
-                            console.log('');
+                            //console.log('SENT', status, JSON.stringify(response));
+                            //console.log('');
+                            //console.log('');
                         } else {
                             console.log('unexpected', status, response);
                         }
@@ -332,6 +342,8 @@
                     </div>
                     <div id="div-summary" style="display: table-cell; width: 360px; padding: 5px; vertical-align: top;"></div>
                 </div>
+
+                <a href="http://project.arobot.info/redmine/documents/19">API Reference</a>
             </div>
 
             <div>

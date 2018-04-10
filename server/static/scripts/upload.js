@@ -112,6 +112,7 @@ var mUploadManager = function() {
                         "client_sent": performance.now()
                     }
                 };
+                console.log('timing', request['timing']);
                 quitem.callback(STATUS.Sent, request);
 
                 // Send AJAX
@@ -124,30 +125,34 @@ var mUploadManager = function() {
                     data : postdata,
                     processData : false,
                     error : function ( response ) {
-                        console.log( response );
+                        console.log( 'ERROR', response );
                     },
                     success : function ( responses ) {
                         console.log('ajax_success');
                         //var json_obj = JSON.parse(responses);
                         var json_obj = responses;
-                        json_obj['timing']['client_rcv'] = performance.now();
-                        console.log('client_rcv', performance.now());
+
+                        if ('timing' in json_obj) {
+                            json_obj['timing']['client_rcv'] = performance.now();
+                            console.log('client_rcv', performance.now());
+                        }
 
                         // This preview is not generalized and should not be here
                         //overlay.remove();
-                        for (var i=0; i<json_obj['requests'].length; i++) {
-                            var request = json_obj['requests'][i];
-                            var quitem_matched = getFileById(request['requestId']);
+                        for (var i=0; i<json_obj['responses'].length; i++) {
+                            var response = json_obj['responses'][i];
+                            var quitem_matched = getFileById(response['requestId']);
                             //console.log('this', this);
-                            //console.log('quitem', request['requestId'], qu);
-                            console.log('request', request);
-                            if (i==json_obj['requests'].length-1) {
-                                // Send debug information in last callback
-                                request['summary'] = {
-                                    'timing': json_obj['timing']
+                            console.log('response', response);
+                            if (i==json_obj['responses'].length-1) {
+                                // Send debug information in last callback; THIS IS A LAZY HACK!
+                                if ('timing' in json_obj) {
+                                    response['summary'] = {
+                                        'timing': json_obj['timing']
+                                    }
                                 }
                             }
-                            quitem_matched.callback(STATUS.Success, request);
+                            quitem_matched.callback(STATUS.Success, response);
                             //$('#img-sample').attr('src', 'data:image/jpg;base64,'+media[request['requestId']]);
                         }
 

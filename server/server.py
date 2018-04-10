@@ -196,23 +196,29 @@ class PredictHandler(tornado.web.RequestHandler):
         img = (img.astype(np.float)) / 255.
         return img
 
+    def get(self):
+        self.set_status(405)
+        self.finish('HTTP GET is not supported; use POST instead. Please compose requests following the guide of API reference at http://project.arobot.info/redmine/documents/19')
+
     def post(self):
         #self.get_argument('username')
         if self.request.body:
             try:
                 postdata = self.request.body.decode('utf-8')
             except ValueError:
-                message = 'Unable to decode as UTF-8'
-                self.send_error(400, message=message) # Bad Request
-                self.finish()
+                self.set_status(400)
+                self.finish('Unable to decode as UTF-8')
+                return
 
             try:
                 json_data = json.loads(postdata)
             except ValueError:
-                message = 'Unable to parse JSON'
-                self.send_error(400, message=message) # Bad Request
-                self.finish()
-            json_data['timing']['server_rcv'] = time.time() * 1000
+                self.set_status(400)
+                self.finish('Unable to parse JSON')
+                return
+
+            if 'timing' in json_data:
+                json_data['timing']['server_rcv'] = time.time() * 1000
 
             print()
             """
@@ -223,14 +229,14 @@ class PredictHandler(tornado.web.RequestHandler):
             - For each service type, options are type dependent
             """
             if 'requests' not in json_data:
-                message = "Requests must be enclosed in 'requests' attribute as a list of request"
-                self.send_error(400, message=message) # Bad Request
-                self.finish()
+                self.set_status(400)
+                self.finish("Requests must be enclosed in 'requests' attribute as a list of request")
+                return
             for request in json_data['requests']:
                 if 'services' not in request:
-                    message = "Services must be enclosed in 'services' attribute for request "+request['requestId']
-                    self.send_error(400, message=message) # Bad Request
-                    self.finish()
+                    self.set_status(400)
+                    self.finish("Services must be enclosed in 'services' attribute for request " + request['requestId'])
+                    return
 
                 img = None
 
@@ -238,29 +244,46 @@ class PredictHandler(tornado.web.RequestHandler):
                     print(service)
                     service_timing = {}
 
+                    if 'media' not in request:
+                        self.set_status(400)
+                        self.finish('Media is empty for request ' + request['requestId'])
+                        return
+                    if 'content' in request['media']:
+                        # Hard-cap length of media/contant at 2MB to save server resource
+                        if len(request['media']['content']) > 2*1024*1024:
+                            self.set_status(400)
+                            self.finish('Content of media too large for request ' + request['requestId'])
+                            return
+
                     if 'type' not in service:
-                        message = "'type' attribute must be specified for service"
-                        self.send_error(400, message=message) # Bad Request
-                        self.finish()
+                        self.set_status(400)
+                        self.finish("'type' attribute of a service must be specified for request " + request['requestId'])
+                        return
 
                     t_ = time.time()
                     if img is None: img = self.__format_image(request['media'])
                     if img is None:
+                        self.set_status(400)
+                        self.finish("Unable to load media for request " + request['requestId'])
+                        return
                         self.send_error(400, message="Invalid 'media'") # Bad Request
                         self.finish()
                     service_timing['decode_img'] = (time.time() - t_) * 1000
                     
                     if service['type']=='_void':
+                        # For validating and benchmarking network connection
                         service['results'] = {
                             'timing': service_timing,
                         }
-                    elif service['type']=='face_':
+                    elif service['type']=='face':
                         face_app = FaceApplications()
                         predictions = face_app.detect(img, params={
                             'service': service,
                         })
                         service['results'] = predictions
-                    elif service['type']=='face':
+                        if 'options' in service: service.pop('options', None)
+                    elif service['type']=='face_':
+                        # This is for testing before 201803
                         classifier = FaceClassifier()
                         classifier.init()
                         rects, predictions, timing, fdetect_result = classifier.detect(request['media'])
@@ -277,13 +300,19 @@ class PredictHandler(tornado.web.RequestHandler):
                             'emotions': fdetect_result['emotions'],
                             'timing': timing,
                         }
-                request['media'] = ''
+                request.pop('media', None)
+    
             #print('json decoded', json_data)
 
         # Set up response dictionary.
         #self.response = json_data
         #print(self.response)
-        json_data['timing']['server_sent'] = time.time()*1000
+        if 'timing' in json_data:
+            json_data['timing']['server_sent'] = time.time()*1000
+
+        json_data['responses'] = json_data['requests']
+        json_data.pop('requests', None)
+
         self.write(json.dumps(json_data))
         self.finish()
 

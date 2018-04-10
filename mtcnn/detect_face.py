@@ -301,19 +301,26 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
     # pnet, rnet, onet: caffemodel
     # threshold: threshold=[th1 th2 th3], th1-3 are three steps's threshold
     # fastresize: resize img from last scale (using in high-resolution images) if fastresize==true
-    factor_count=0
-    total_boxes=np.empty((0,9))
-    points=[]
-    h=img.shape[0]
-    w=img.shape[1]
-    minl=np.amin([h, w])
-    m=12.0/minsize
-    minl=minl*m
+
+    try:
+        height, width, channels = img.shape
+        if channels != 3: raise ValueError
+    except ValueError:
+        raise ValueError('Input image must have 3 channels')
+
+    factor_count = 0
+    total_boxes = np.empty((0,9))
+    points = []
+    h = img.shape[0]
+    w = img.shape[1]
+    minl = np.amin([h, w])
+    m = 12.0 / minsize
+    minl = minl * m
     # creat scale pyramid
-    scales=[]
-    while minl>=12:
+    scales = []
+    while minl >= 12:
         scales += [m*np.power(factor, factor_count)]
-        minl = minl*factor
+        minl = minl * factor
         factor_count += 1
 
     #im_data = (im_data-127.5)*0.0078125
@@ -321,11 +328,11 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
 
     # first stage
     for j in range(len(scales)):
-        scale=scales[j]
-        hs=int(np.ceil(h*scale))
-        ws=int(np.ceil(w*scale))
+        scale = scales[j]
+        hs = int(np.ceil(h*scale))
+        ws = int(np.ceil(w*scale))
         im_data = imresample(img, (hs, ws), interpolation=interpolation)
-        #im_data = (im_data-127.5)*0.0078125
+        #im_data = (im_data-127.5)*0.0078125\
         img_x = np.expand_dims(im_data, 0)
         img_y = np.transpose(img_x, (0,2,1,3))
         out = pnet(img_y)
@@ -382,7 +389,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
             total_boxes = rerec(total_boxes.copy())
 
     numbox = total_boxes.shape[0]
-    if numbox>0:
+    if numbox > 0:
         # third stage
         total_boxes = np.fix(total_boxes).astype(np.int32)
         dy, edy, dx, edx, y, ey, x, ex, tmpw, tmph = pad(total_boxes.copy(), w, h)
@@ -411,12 +418,19 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
         h = total_boxes[:,3]-total_boxes[:,1]+1
         points[0:5,:] = np.tile(w,(5, 1))*points[0:5,:] + np.tile(total_boxes[:,0],(5, 1))-1
         points[5:10,:] = np.tile(h,(5, 1))*points[5:10,:] + np.tile(total_boxes[:,1],(5, 1))-1
-        if total_boxes.shape[0]>0:
+        if total_boxes.shape[0] > 0:
             total_boxes = bbreg(total_boxes.copy(), np.transpose(mv))
             pick = nms(total_boxes.copy(), 0.7, 'Min')
             total_boxes = total_boxes[pick,:]
             points = points[:,pick]
-                
+
+        # Transpose coordinates of landmarks
+        print('transpose', points.shape, numbox, total_boxes.shape)
+        points = points.reshape(2, -1)
+        points = np.transpose(points)
+        points = points.reshape((5, -1, 2))
+        points = np.swapaxes(points, 0, 1)
+
     return total_boxes, points
 
 """

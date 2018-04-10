@@ -34,6 +34,9 @@ def main():
         val(ARGS)
     elif ARGS.test=='fer':
         fer(ARGS)
+    elif ARGS.test=='align':
+        face_app = FaceApplications()
+        face_app.align_dataset()
     elif ARGS.test=='fxpress':
         fxpress(ARGS)
     elif ARGS.test=='fxpress_train':
@@ -69,7 +72,7 @@ def main():
         ]
         
         log_file = open('../data/face_benchmark.csv', 'w')
-        log_file.write('time,precision_index,options\n')
+        log_file.write('time,precision_index,cp,options\n')
 
         for interp in interpolations:
             for res_cap in resolutions:
@@ -89,7 +92,7 @@ def main():
                     elif interp=='AREA':
                         interpolation = cv2.INTER_AREA
 
-                    iterations = 10
+                    iterations = 20
                     file_count = len(expectations)
                     time_sampling = np.zeros((file_count, iterations,), dtype=np.float)
                     pi_sampling = np.zeros((file_count, iterations,), dtype=np.float)
@@ -165,9 +168,10 @@ def main():
 
                     time_mean = np.mean(time_sampling)
                     pi_mean = np.mean(pi_sampling) * 100
+                    cp = pi_mean * pi_mean / time_mean
                     print(time_mean, pi_mean)
                     print()
-                    log_file.write(','.join([str(time_mean), str(pi_mean), json.dumps(options)])+'\n')
+                    log_file.write(','.join([str(time_mean), str(pi_mean), str(cp), json.dumps(options)])+'\n')
                     log_file.flush()
 
         log_file.close()
