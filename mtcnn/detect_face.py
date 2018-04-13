@@ -425,7 +425,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
             points = points[:,pick]
 
         # Transpose coordinates of landmarks
-        print('transpose', points.shape, numbox, total_boxes.shape)
+        #print('transpose', points.shape, numbox, total_boxes.shape)
         points = points.reshape(2, -1)
         points = np.transpose(points)
         points = points.reshape((5, -1, 2))

@@ -17,6 +17,11 @@ from emotion.emotion_recognition import fxpress, fxpress_train
 from facer.emotion import EmotionClassifier
 from facer.face_app import FaceApplications
 
+from mtcnn import detect_face as FaceDetector
+from facenet import facenet
+import sklearn.metrics, sklearn.preprocessing
+import scipy.spatial, scipy.cluster
+
 def main():
     if ARGS.test=='train':
         train(ARGS)
@@ -34,6 +39,80 @@ def main():
         val(ARGS)
     elif ARGS.test=='fer':
         fer(ARGS)
+
+    elif ARGS.test=='facenet':
+        print(facenet)
+
+        images = []
+
+        mtcnn = tf.Session()
+        pnet, rnet, onet = FaceDetector.create_mtcnn(mtcnn, None)
+
+        fid = 0
+        for i in range(16):
+            f = DirectoryWalker().get_a_file(directory='../data/face/lfw', filters=['.jpg'])
+
+            img = cv2.imread(f.path, 1)
+            img = img
+            extents, landmarks = FaceDetector.detect_face(img/255., 120, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=0.6, interpolation=cv2.INTER_LINEAR)
+
+            print(extents)
+
+            for j, e in enumerate(extents):
+                x1, y1, x2, y2, confidence = e.astype(dtype=np.int)
+                print(len(landmarks[j]))
+                #cropped = img[int(x1):int(x2), int(y1):int(y2), :]
+                aligned = FaceApplications.align_face(img, landmarks[j], intensity=1., sz=160, ortho=True, expand=1.5)
+                cv2.imwrite('../data/face/mtcnn_cropped/'+str(fid).zfill(4)+'.jpg', aligned)
+
+                images.append(aligned/255.)
+
+                """debug = aligned.astype(dtype=np.int)
+                print('debug', debug)
+                for p in debug:
+                    cv2.circle(img, (p[0], p[1]), 2, (255, 0, 255))
+
+                for p in landmarks[j]:
+                    cv2.circle(img, (p[0], p[1]), 2, (255, 255, 0))"""
+                
+                fid += 1
+
+            #cv2.imwrite('../data/face/mtcnn_cropped/'+str(i).zfill(4)+'-annotated.jpg', img)
+
+        # Load the model
+        t_ = time.time()
+        print('Loading model...')
+        sess = facenet.load_model('../models/facenet/model-20170512-110547.ckpt')
+        t_ = time.time() - t_
+        print('done', t_*1000)
+
+        with sess.as_default():
+            # Get input and output tensors
+            images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
+            embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
+            phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+
+            # Run forward pass to calculate embeddings
+            t_ = time.time()
+            feed_dict = { images_placeholder: images, phase_train_placeholder:False }
+            emb = sess.run(embeddings, feed_dict=feed_dict)
+            t_ = time.time() - t_
+            print('forward', emb.shape, t_*1000)
+            print()
+
+            # Test distance
+            samples = sklearn.preprocessing.normalize(emb)
+            for i1, s1 in enumerate(samples):
+                for i2, s2 in enumerate(samples):
+                    d_ = scipy.spatial.distance.cosine(s1, s2)
+                    if d_ < 0.5:
+                        print(i1, i2, d_)
+                print()
+
+            """tree = scipy.spatial.KDTree(samples)
+            for i, s in enumerate(samples):
+                print(i, tree.query(s))"""
+
     elif ARGS.test=='align':
         face_app = FaceApplications()
         face_app.align_dataset()
@@ -119,7 +198,7 @@ def main():
                                     'services': [
                                         {
                                             'type': 'face_',
-                                            'model': 'alexnet-emoc',
+                                            'model': 'a-emoc',
                                             'options': options
                                         }
                                     ]

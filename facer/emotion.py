@@ -160,6 +160,7 @@ class EmotionClassifier:
             self.y = fully_connected(_, size=n_class)
             self.y = tf.nn.softmax(self.y)
 
-        checkpoint = './emotion/data/emotion_recognition'
+        #checkpoint = './emotion/data/emotion_recognition'
+        checkpoint = '../models/a-emoc/emotion_recognition'
         self.saver = tf.train.Saver(filename=checkpoint)
         self.saver.restore(self.sess, checkpoint)

@@ -209,6 +209,63 @@ class FaceApplications(VisionApplications):
 
         return predictions
 
+    @staticmethod
+    def align_face(img, landmarks, intensity=0.5, sz=48, ortho=False, expand=1.0):
+        # Normalize face pose and position with landmarks of 5 points: eyes, nose, mouth corners
+
+        # Convert landmarks to numpy array
+        left_eye = np.array(landmarks[0], dtype=np.float)
+        right_eye = np.array(landmarks[1], dtype=np.float)
+        nose = np.array(landmarks[2], dtype=np.float)
+        mouth = (np.array(landmarks[3], dtype=np.float) + np.array(landmarks[4], dtype=np.float))/2.
+        low_center = (np.array(landmarks[2], dtype=np.float) + np.array(landmarks[3], dtype=np.float) + np.array(landmarks[4], dtype=np.float)) / 3.
+
+        # Calculate correction vectors for vertical and horizontal axes
+        eye_center = (right_eye+left_eye) / 2.
+        vv = nose - eye_center
+        vh = (right_eye - left_eye)
+
+        if ortho:
+            vv = np.roll(vh, 1)
+            vv *= 17. / 24. * expand
+            vv[0] *= -1
+            vh *= expand
+            print('vh-vv', vh, vv)
+
+        # Change length of correction vectors to be proportionate to face dimension
+        vv_high = vv * 35. / 17.
+        vv_low = vv * 13. / 17.
+
+        print('vectors', vh, vv_high, vv_low)
+
+        # Calculate 4 corners for perspective transformation
+        corners = np.array(
+            [low_center - vv_high - vh,
+            low_center - vv_high + vh,
+            low_center + vv_low + vh,
+            low_center + vv_low - vh,],
+            dtype= np.float)
+
+        """debug = np.array(
+            [low_center - vv_high - vh,
+            low_center - vv_high + vh,
+            low_center + vv_low + vh,
+            low_center + vv_low - vh,
+            low_center,
+            low_center + vh,
+            low_center + vv,
+            ],
+            dtype= np.float)
+        return debug"""
+
+        # Perspective transformation
+        rect = np.array(corners, dtype = "float32")
+        dst = np.array([[0, 0], [sz-1, 0], [sz-1, sz-1], [0, sz-1]], dtype = "float32")
+        rect = rect*intensity + dst*(1.-intensity)
+        M = cv2.getPerspectiveTransform(rect, dst)
+
+        return cv2.warpPerspective(img, M, (sz, sz), borderMode=cv2.BORDER_CONSTANT)
+
     def align_dataset(self, directory=None):
         if directory is None:
             directory = '../data/face/fer2013_raw'
@@ -235,36 +292,11 @@ class FaceApplications(VisionApplications):
             extents, landmarks = FaceDetector.detect_face(img, 48, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=0.5)
 
             if len(landmarks) and len(landmarks[0]):
-                left_eye = np.array(landmarks[0][0], dtype=np.float)
-                right_eye = np.array(landmarks[0][1], dtype=np.float)
-                nose = np.array(landmarks[0][2], dtype=np.float)
-                mouth = (np.array(landmarks[0][3], dtype=np.float) + np.array(landmarks[0][4], dtype=np.float))/2.
-                low_center = (np.array(landmarks[0][2], dtype=np.float) + np.array(landmarks[0][3], dtype=np.float) + np.array(landmarks[0][4], dtype=np.float)) / 3.
-
-                eye_center = (right_eye+left_eye) / 2.
-                vv = nose - eye_center
-                vv = vv / math.sqrt(vv[0]*vv[0] + vv[1]*vv[1])
-                vh = (right_eye - left_eye)
-                vh = vh / math.sqrt(vh[0]*vh[0] + vh[1]*vh[1])
-
-                corners = np.array(
-                   [low_center - vv*35 - vh*24,
-                    low_center - vv*35 + vh*24,
-                    low_center + vv*13 + vh*24,
-                    low_center + vv*13 - vh*24,],
-                    dtype= np.float)
-
-                print(corners)
-
-                # Affine transformation
-                rect = np.array(corners, dtype = "float32")
-                dst = np.array([[0, 0], [47, 0], [47, 47], [0, 47]], dtype = "float32")
-                rect = (rect+dst) / 2.
-                M = cv2.getPerspectiveTransform(rect, dst)
-                warpped = cv2.warpPerspective(img, M, (48, 48), borderMode=cv2.BORDER_CONSTANT)
+                warpped = self.align_face(img, landmarks[0])
 
                 outpath = f.path.replace('fer2013_raw', 'fer2013_aligned')
                 if outpath != f.path:
+                    print(outpath)
                     outdir = os.path.split(outpath)[0]
                     pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
                     cv2.imwrite(outpath, warpped*255)
