@@ -230,13 +230,10 @@ class FaceApplications(VisionApplications):
             vv *= 17. / 24. * expand
             vv[0] *= -1
             vh *= expand
-            print('vh-vv', vh, vv)
 
         # Change length of correction vectors to be proportionate to face dimension
         vv_high = vv * 35. / 17.
         vv_low = vv * 13. / 17.
-
-        print('vectors', vh, vv_high, vv_low)
 
         # Calculate 4 corners for perspective transformation
         corners = np.array(

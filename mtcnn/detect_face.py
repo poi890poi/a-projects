@@ -348,7 +348,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
             total_boxes = np.append(total_boxes, boxes, axis=0)
 
     numbox = total_boxes.shape[0]
-    if numbox>0:
+    if numbox > 0:
         pick = nms(total_boxes.copy(), 0.7, 'Union')
         total_boxes = total_boxes[pick,:]
         regw = total_boxes[:,2]-total_boxes[:,0]
@@ -363,7 +363,7 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
         dy, edy, dx, edx, y, ey, x, ex, tmpw, tmph = pad(total_boxes.copy(), w, h)
 
     numbox = total_boxes.shape[0]
-    if numbox>0:
+    if numbox > 0:
         # second stage
         tempimg = np.zeros((24,24,3,numbox))
         for k in range(0,numbox):
