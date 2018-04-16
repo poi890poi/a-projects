@@ -144,6 +144,51 @@ class FaceApplications(VisionApplications):
             extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
             predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
 
+            # For testing, detect second time with ROIs (like in tracking mode)
+            if len(extents):
+                t_ = time.time()
+                height, width, *_ = resized.shape
+                #print()
+                #print('shape', resized.shape)
+                #print('extents', extents)
+                # Expand extents
+                for i, e in enumerate(extents):
+                    w = e[2] - e[0]
+                    h = e[3] - e[1]
+                    extents[i] += np.array((-w, -h, w, h, 0), dtype=np.float)
+                    e = extents[i]
+                    extents[i] = np.array((max(e[0], 0), max(e[1], 0), min(e[2], width-1), min(e[3], height-1), e[4]), dtype=np.float)
+                #print('expand', extents)
+                # Group overlapped extents
+                for iteration in range(16):
+                    no_overlap = True
+                    for i1, e1 in enumerate(extents):
+                        if e1[4]==0: continue
+                        for i2, e2 in enumerate(extents):
+                            if e2[4]==0: continue
+                            if i1!=i2:
+                                if e2[0]>e1[2] or e2[1]>e1[3] or e2[2]<e1[0] or e2[3]<e1[1]:
+                                    pass
+                                else:
+                                    no_overlap = False
+                                    extents[i1] = np.array((min((e1[0], e2[0])), min((e1[1], e2[1])), max((e1[2], e2[2])), max((e1[3], e2[3])), 1), dtype=np.float)
+                                    extents[i2] = np.array((0, 0, 0, 0, 0), dtype=np.float)
+                    if no_overlap: break
+                #print(type(extents[0]))
+                #print('group', extents)
+                predictions['timing']['prepare_roi'] = (time.time() - t_) * 1000
+                t_ = time.time()
+                for i, e in enumerate(extents):
+                    if e[4] > 0:
+                        e = e.astype(dtype=np.int)
+                        roi = resized[e[1]:e[3], e[0]:e[2], :]
+                        _extents, _landmarks = FaceDetector.detect_face(roi, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
+                        #print()
+                        #print(i, roi.shape)
+                        #print(_extents)
+                predictions['timing']['mtcnn_roi'] = (time.time() - t_) * 1000
+                predictions['timing']['mtcnn_roi_total'] = predictions['timing']['prepare_roi'] + predictions['timing']['mtcnn_roi']
+
             if len(landmarks):
                 landmarks = np.array(landmarks) * scale_factor
             """if len(extents):
@@ -157,9 +202,12 @@ class FaceApplications(VisionApplications):
                 facelist = np.zeros((len(extents), 48, 48), dtype=np.float)
                 predictions['timing']['emoc_prepare'] = 0
             
+            print()
+            print(extents)
             for i, e in enumerate(extents):
                 #e_ = (Rectangle(r_[0], r_[1], r_[2], r_[3]).to_extent().eval() * scale_factor).astype(dtype=np.int).tolist()
                 r_ = (np.array([e[0], e[1], e[2]-e[0], e[3]-e[1]])*scale_factor).astype(dtype=np.int).tolist()
+                print('extents', i, e, r_)
                 predictions['rectangles'].append(r_)
                 predictions['confidences'].append(int(e[4]*1000))
                 plist_ = landmarks[i].astype(dtype=np.int).tolist()
@@ -169,6 +217,9 @@ class FaceApplications(VisionApplications):
                     #(x, y, w, h) = imutil.rect_fit_ar(r_, [0, 0, img.shape[1], img.shape[0]], 1., crop=False)
                     (x, y, w, h) = imutil.rect_fit_points(landmarks[i], )
                     r_ = np.array([x, y, w, h]).astype(dtype=np.int).tolist()
+                    
+                    # Return landmarks-corrected reactangles instead of MTCNN rectangle.
+                    # The rectangles are used to subsample faces for emotion recognition.
                     predictions['rectangles'][-1] = r_
 
                     (x, y, w, h) = r_

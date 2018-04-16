@@ -159,6 +159,9 @@
                             'Total server time: ' + round(t_server) + ' ms<br/>' +
                             'Image processing time (server): ' + round(timing['fit_resize']) + ' ms<br/>' +
                             'MTCNN detection time (server): ' + round(timing['mtcnn']) + ' ms<br/>' +
+                            'ROI MTCNN detection time (server): ' + round(timing['mtcnn_roi_total']) + ' ms<br/>' +
+                            'ROI MTCNN prepare: ' + round(timing['prepare_roi']) + ' ms<br/>' +
+                            'ROI MTCNN detection: ' + round(timing['mtcnn_roi']) + ' ms<br/>' +
                             'Options: ' + JSON.stringify(this.options) + '<br/>' +
                             'Faces detected: ' + rectangles.length + '<br/>' +
                             'Image processing time (server): ' + round(timing['emoc_prepare']) + ' ms<br/>' +

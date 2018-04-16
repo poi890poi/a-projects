@@ -80,7 +80,7 @@ def main():
 
             emb = None
             names = []
-            for iteration in range(128):
+            for iteration in range(16):
                 # Load faces from LFW dataset and parse their names from path to group faces
                 images = []
                 batch_size = 128

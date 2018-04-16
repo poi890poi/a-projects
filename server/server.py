@@ -241,7 +241,7 @@ class PredictHandler(tornado.web.RequestHandler):
                 img = None
 
                 for service in request['services']:
-                    print(service)
+                    #print(service)
                     service_timing = {}
 
                     if 'media' not in request:
@@ -282,6 +282,7 @@ class PredictHandler(tornado.web.RequestHandler):
                         })
                         service['results'] = predictions
                         if 'options' in service: service.pop('options', None)
+                        #print('service', service)
                     elif service['type']=='face_':
                         # This is for testing before 201803
                         classifier = FaceClassifier()
