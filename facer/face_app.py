@@ -12,6 +12,9 @@ import os.path
 import pathlib
 import math
 
+from queue import Queue, Empty
+import threading
+
 """
 - Array plane is (custom) defined as coordinate system of y (row) before x (col),
   optimizing for array and bytes operations
@@ -45,18 +48,37 @@ class Extent:
     def eval(self):
         return self.extent
 
-class Singleton(type):
-    _instances = {}
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
-        return cls._instances[cls]
+class DetectionTask():
+    """
+    A task is a container to hold input parameters and output results for detection.
+    It's pushed into the synchronized queue to be staged for detection.
+    A task only holds variables and does not do intensive computing.
+    """
+    def __init__(self, img, params):
+        self.img = img
+        self.params = params
 
-class VisionApplications(metaclass=Singleton):
-    def detect(self, media): raise(NotImplementedError)
+class VisionCore(threading.Thread):
+    """
+    A core is a thread class that manages model and does actual detection.
+    Multiple instances of a core class allocate multiple copies of Tensorflow session, if it's used.
+    Cores are managed by 'applications' class objects.
+    """
+    def __init__(self, in_queue, out_queue):
+        threading.Thread.__init__(self)
+        self.in_queue = in_queue
+        self.out_queue = out_queue
+        self._init_derived()
 
-class FaceApplications(VisionApplications):
-    def __init__(self):
+    def _init_derived(self):
+        raise NotImplementedError('VisionCore::__init_derived() must be implemented in derived class')
+
+    def run(self):
+        raise NotImplementedError('VisionCore::run() must be implemented in derived class')
+
+class FaceCore(VisionCore):
+    """ The singleton that manages all detection """
+    def _init_derived(self):
         self.__mtcnn = None
         self.__emoc = None
 
@@ -81,6 +103,23 @@ class FaceApplications(VisionApplications):
             sys.stdout.write('done')
             print()
         return self.__emoc
+
+    def run(self):
+        # Initialize required models and sessions
+        if self.__mtcnn is None:
+            self.__get_detector_create()
+        if self.__emoc is None:
+            self.__get_emotion_classifier_create()
+
+        while True:
+            #grabs data from queue
+            task = self.in_queue.get() # queue::get() is blocking by default
+
+            print(task.params)
+            task.params['output_holder'].put({'predictions': self.detect(task.img, task.params)})
+
+            #signals to queue job is done
+            self.in_queue.task_done()
 
     def detect(self, img, params):
         """
@@ -260,6 +299,90 @@ class FaceApplications(VisionApplications):
 
         return predictions
 
+    def align_dataset(self, directory=None):
+        if directory is None:
+            directory = '../data/face/fer2013_raw'
+
+        stats = {
+            'count': 0,
+            'left': [0., 0.],
+            'right': [0., 0.],
+            'low': [0., 0.],
+        }
+
+        while True:
+            f = dirwalker().get_a_file(directory=directory, filters=['.jpg'])
+            if f is None: break
+
+            img = cv2.imread(f.path, 1)
+            if img is None:break
+            img = (img.astype(dtype=np.float32))/255
+
+            detector = self.__get_detector_create()
+            pnet = detector['pnet']
+            rnet = detector['rnet']
+            onet = detector['onet']
+            extents, landmarks = FaceDetector.detect_face(img, 48, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=0.5)
+
+            if len(landmarks) and len(landmarks[0]):
+                warpped = self.align_face(img, landmarks[0])
+
+                outpath = f.path.replace('fer2013_raw', 'fer2013_aligned')
+                if outpath != f.path:
+                    print(outpath)
+                    outdir = os.path.split(outpath)[0]
+                    pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(outpath, warpped*255)
+
+                """# Statitics of positions of eyes and nose
+                stats['count'] += 1
+                count = stats['count']
+
+                stats['left'][0] = stats['left'][0]*(count-1)/count + left_eye[0]/count
+                stats['left'][1] = stats['left'][1]*(count-1)/count + left_eye[1]/count
+                stats['right'][0] = stats['right'][0]*(count-1)/count + right_eye[0]/count
+                stats['right'][1] = stats['right'][1]*(count-1)/count + right_eye[1]/count
+                stats['low'][0] = stats['low'][0]*(count-1)/count + low_center[0]/count
+                stats['low'][1] = stats['low'][1]*(count-1)/count + low_center[1]/count
+
+                print(stats)"""
+
+            else:
+                pass
+
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class VisionMainThread(metaclass=Singleton):
+    """
+    The singleton that manages all computer vision cores of a specific function block, e.g., face application, object detection, scene segmentation....
+    Each function block (a set of related applications) maintains its own thread with status, input queue, output queue...
+    Each function block (a set of related applications) spawns multiple threads as 'core' that do the actual detection.
+    """
+    def __init__(self):
+        pass
+
+class FaceApplications(VisionMainThread):
+    """ This is for backward compatibility and the interface MUST NOT be changed. """
+    def __init__(self):
+        self.in_queue = Queue()
+        self.out_queue = Queue()
+        for i in range(2):
+            t = FaceCore(self.in_queue, self.out_queue)
+            t.setDaemon(True)
+            t.start()
+        print('FaceApplications singleton initialized')
+
+    def detect(self, img, params):
+        """ Queue the task in VisionMainThread """
+        print('detect', params)
+        t = DetectionTask(img, params)
+        self.in_queue.put(t)
+
     @staticmethod
     def align_face(img, landmarks, intensity=0.5, sz=48, ortho=False, expand=1.0):
         # Normalize face pose and position with landmarks of 5 points: eyes, nose, mouth corners
@@ -315,56 +438,7 @@ class FaceApplications(VisionApplications):
         return cv2.warpPerspective(img, M, (sz, sz), borderMode=cv2.BORDER_CONSTANT)
 
     def align_dataset(self, directory=None):
-        if directory is None:
-            directory = '../data/face/fer2013_raw'
-
-        stats = {
-            'count': 0,
-            'left': [0., 0.],
-            'right': [0., 0.],
-            'low': [0., 0.],
-        }
-
-        while True:
-            f = dirwalker().get_a_file(directory=directory, filters=['.jpg'])
-            if f is None: break
-
-            img = cv2.imread(f.path, 1)
-            if img is None:break
-            img = (img.astype(dtype=np.float32))/255
-
-            detector = self.__get_detector_create()
-            pnet = detector['pnet']
-            rnet = detector['rnet']
-            onet = detector['onet']
-            extents, landmarks = FaceDetector.detect_face(img, 48, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=0.5)
-
-            if len(landmarks) and len(landmarks[0]):
-                warpped = self.align_face(img, landmarks[0])
-
-                outpath = f.path.replace('fer2013_raw', 'fer2013_aligned')
-                if outpath != f.path:
-                    print(outpath)
-                    outdir = os.path.split(outpath)[0]
-                    pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)
-                    cv2.imwrite(outpath, warpped*255)
-
-                """# Statitics of positions of eyes and nose
-                stats['count'] += 1
-                count = stats['count']
-
-                stats['left'][0] = stats['left'][0]*(count-1)/count + left_eye[0]/count
-                stats['left'][1] = stats['left'][1]*(count-1)/count + left_eye[1]/count
-                stats['right'][0] = stats['right'][0]*(count-1)/count + right_eye[0]/count
-                stats['right'][1] = stats['right'][1]*(count-1)/count + right_eye[1]/count
-                stats['low'][0] = stats['low'][0]*(count-1)/count + low_center[0]/count
-                stats['low'][1] = stats['low'][1]*(count-1)/count + low_center[1]/count
-
-                print(stats)"""
-
-            else:
-                pass
-
+        pass
 
 if __name__== "__main__":
     face_app = FaceApplications()

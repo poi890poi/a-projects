@@ -14,7 +14,9 @@ import cv2
 import numpy as np
 
 from facer.predict import FaceClassifier
-from facer.face_app import FaceApplications
+from facer.face_app import FaceApplications, DetectionTask
+
+from queue import Queue, Empty
 
 class Singleton(type):
     _instances = {}
@@ -202,6 +204,12 @@ class PredictHandler(tornado.web.RequestHandler):
 
     def post(self):
         #self.get_argument('username')
+
+        try:
+            self.out_queue
+        except AttributeError:
+            self.out_queue = Queue()
+
         if self.request.body:
             try:
                 postdata = self.request.body.decode('utf-8')
@@ -277,11 +285,15 @@ class PredictHandler(tornado.web.RequestHandler):
                         }
                     elif service['type']=='face':
                         face_app = FaceApplications()
-                        predictions = face_app.detect(img, params={
+                        face_app.detect(img, params={
                             'service': service,
+                            'output_holder': self.out_queue,
                         })
-                        service['results'] = predictions
+                        output = self.out_queue.get()
+                        print(output)
+                        service['results'] = output['predictions']
                         if 'options' in service: service.pop('options', None)
+                        self.out_queue.task_done()
                         #print('service', service)
                     elif service['type']=='face_':
                         # This is for testing before 201803
@@ -328,6 +340,7 @@ def make_app():
 
 def server_start(args, port=9000):
     print('Serving tornado server on port', port)
+    FaceApplications() # Initialize face applications singleton
     app = make_app()
     app.listen(port)
     tornado.ioloop.PeriodicCallback(try_exit, 100).start()

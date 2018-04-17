@@ -48,9 +48,10 @@ f_ = 0
 osd = []
 
 # Start the thread for URL fetching
-t = ThreadUrl(queue)
-t.setDaemon(True)
-t.start()
+for i in range(1):
+    t = ThreadUrl(queue)
+    t.setDaemon(True)
+    t.start()
 
 EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutral']
 font = cv2.FONT_HERSHEY_SIMPLEX
