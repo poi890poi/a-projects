@@ -10,55 +10,72 @@ from urllib.request import Request, urlopen
 from queue import Queue, Empty
 import threading
 
-queue = Queue()
+in_queue = Queue()
+out_queue = Queue()
 
 class ThreadUrl(threading.Thread):
     """Threaded Url Grab"""
-    def __init__(self, queue):
+    def __init__(self, in_queue, out_queue):
         threading.Thread.__init__(self)
-        self.queue = queue
-        self.response = None
+        self.in_queue = in_queue
+        self.out_queue = out_queue
  
     def run(self):
         while True:
             #grabs data from queue
-            postdata = self.queue.get()
-        
-            #self.response = None
-            url = 'http://192.168.41.41:9000/predict'
-            request = Request(url, data=postdata.encode())
-            response = json.loads(urlopen(request).read().decode())
-            timing = response['timing']
-            server_time = timing['server_sent'] - timing['server_rcv']
-            total_time = (time.time() - timing['client_sent']) * 1000
-            client_time = total_time - server_time
-            #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
-            self.response = response
-            print('response time:', total_time)
+            task = self.in_queue.get()
+
+            if time.time() > task['timing']['t_expiration']:
+                # Task waiting for too long in the queue; discard it.
+                print('skip frame')
+
+            else:
+                print('frame to http request', time.time()*1000 - task['agent']['t_frame'])
+                
+                postdata = json.dumps(task)
+            
+                #self.response = None
+                url = 'http://192.168.41.41:9000/predict'
+                request = Request(url, data=postdata.encode())
+                response = json.loads(urlopen(request).read().decode())
+                timing = response['timing']
+                server_time = timing['server_sent'] - timing['server_rcv']
+                total_time = (time.time() - timing['client_sent']) * 1000
+                client_time = total_time - server_time
+                #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
+                response['agent'] = task['agent']
+                self.out_queue.put(response)
+                print('frame to http response', time.time()*1000 - task['agent']['t_frame'])
+                print('response time:', total_time)
+            
+            print()
                     
             #signals to queue job is done
-            self.queue.task_done()
+            self.in_queue.task_done()
 
 # Initialize video capture object
 cap = cv2.VideoCapture(0)
 
-interval = 1./5.
+interval = 1./25.
 t_ = time.time() + interval
 f_ = 0
 osd = []
 
 # Start the thread for URL fetching
 for i in range(1):
-    t = ThreadUrl(queue)
+    t = ThreadUrl(in_queue, out_queue)
     t.setDaemon(True)
     t.start()
 
 EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutral']
 font = cv2.FONT_HERSHEY_SIMPLEX
 
+last_response = None
+
 while(True):
     # Capture frame-by-frame
     ret, frame = cap.read()
+    t_frame = time.time() * 1000
 
     # Our operations on the frame come here
     #gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -78,36 +95,59 @@ while(True):
                     "services": [
                         {
                             "type": "face",
-                            "model": "a-emoc",
+                            #"model": "a-emoc", # Request emotion recognition
+                            "model": "fnet",
                             "options": {
                                 "res_cap": 448,
                                 "factor": 0.6,
-                                "interp": "NEAREST" 
+                                "interp": "NEAREST",
+                                "fnet-cooldown": 1500,
                             }
                         }
                     ]
                 }
             ],
             'agent': {
-                'agentId': '192.168.41.41'
+                'agentId': '192.168.41.41',
+                't_frame': t_frame,
             },
             'timing': {
-                'client_sent': time.time()
+                'client_sent': time.time(),
+                't_expiration': time.time() + 0.25,
             }
         }
 
-        queue.put(json.dumps(requests))
+        if in_queue.qsize() >= 1:
+            # in_queue is full
+            pass
+        else:
+            in_queue.put(requests)
+            print('qsize', in_queue.qsize())
 
         f_ = 0
         t_ = time.time() + interval
 
-    if t.response is not None:
+    try:
+        last_response = out_queue.get_nowait()
+        print('frame to get_nowait()', time.time()*1000 - last_response['agent']['t_frame'])
+    except Empty:
+        pass
+
+    if last_response:
         #print(len(t.response['responses'][0]['services'][0]['results']['rectangles']))
-        for response in t.response['responses']:
-            for service in response['services']:
+        for r in last_response['responses']:
+            for service in r['services']:
                 for i, r in enumerate(service['results']['rectangles']):
                     cv2.rectangle(frame, (r[0], r[1]), (r[0]+r[2], r[1]+r[3]), (255, 0, 255))
-                    cv2.putText(frame, EMOTIONS[np.argmax(service['results']['emotions'][i])], (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)
+                    if 'emotions' in service['results'] and len(service['results']['emotions']):
+                        cv2.putText(frame, EMOTIONS[np.argmax(service['results']['emotions'][i])], (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)
+                    if 'identities' in service['results']:
+                        identity = service['results']['identities']
+                        name = identity['name'][i]
+                        confidence = identity['confidence'][i]
+                        if confidence > 0:
+                            tag = name + ' / ' + str(confidence/1000)
+                            cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)
 
     osd = [str(time.time()*1000), repr(frame.shape)]
     y_ = 30

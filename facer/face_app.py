@@ -3,6 +3,10 @@ from facer.emotion import EmotionClassifier
 from shared.utilities import ImageUtilities as imutil
 from shared.utilities import DirectoryWalker as dirwalker
 
+from facenet import facenet
+import sklearn.metrics, sklearn.preprocessing
+import scipy.spatial, scipy.cluster
+
 import sys
 import time
 import numpy as np
@@ -11,6 +15,7 @@ import tensorflow as tf
 import os.path
 import pathlib
 import math
+import uuid
 
 from queue import Queue, Empty
 import threading
@@ -48,6 +53,10 @@ class Extent:
     def eval(self):
         return self.extent
 
+FACE_EMBEDDING_THRESHOLD_QUERY = 0.5375 # High precision 99%
+#embedding_threshold_query = 0.584375 # High recall 96%
+FACE_EMBEDDING_THRESHOLD_CLUSTERING = 0.378125 # Highest precision 99.866777%
+
 class DetectionTask():
     """
     A task is a container to hold input parameters and output results for detection.
@@ -57,6 +66,8 @@ class DetectionTask():
     def __init__(self, img, params):
         self.img = img
         self.params = params
+        self.t_queued = time.time() * 1000
+        self.t_expiration = time.time() + 0.25
 
 class VisionCore(threading.Thread):
     """
@@ -64,10 +75,9 @@ class VisionCore(threading.Thread):
     Multiple instances of a core class allocate multiple copies of Tensorflow session, if it's used.
     Cores are managed by 'applications' class objects.
     """
-    def __init__(self, in_queue, out_queue):
+    def __init__(self, in_queue):
         threading.Thread.__init__(self)
         self.in_queue = in_queue
-        self.out_queue = out_queue
         self._init_derived()
 
     def _init_derived(self):
@@ -76,12 +86,97 @@ class VisionCore(threading.Thread):
     def run(self):
         raise NotImplementedError('VisionCore::run() must be implemented in derived class')
 
+class FaceEmbeddingThread(VisionCore):
+    def _init_derived(self):
+        self.face_names = []
+        self.t_update_face_tree = 0
+
+        # These are for finding cluster candidates to be registered
+        self.face_embeddings_register = []
+        self.face_tree_register = None
+        
+        # These are for registered clusters to be queried
+        self.face_embeddings_cluster = []
+        self.face_tree_cluster = None
+
+    def run(self):
+        while True:
+            t_now = time.time()
+
+            # Get new face embeddings and update KDTree
+            emb = self.in_queue.get() # queue::get() is blocking by default
+
+            print(threading.current_thread(), 'register new face')
+            emb = sklearn.preprocessing.normalize([emb,])[0]
+            self.face_embeddings_register.append(emb)
+            
+            while len(self.face_embeddings_register) > 32: # The list of face embedding is too long
+                self.face_embeddings_register.pop(0)
+
+            # Update KD Tree only every X seconds
+            if self.t_update_face_tree==0:
+                self.t_update_face_tree = t_now + 3.
+            elif t_now > self.t_update_face_tree:
+                print()
+                print()
+                print(threading.current_thread(), 'update face tree', len(self.face_embeddings_register))
+                self.face_tree_register = scipy.spatial.KDTree(self.face_embeddings_register)
+                b_tree = self.face_tree_register.query_ball_tree(self.face_tree_register, FACE_EMBEDDING_THRESHOLD_CLUSTERING)
+                if b_tree is not None:
+                    b_tree.sort(key=len, reverse=True)
+                    for new_cluster in b_tree:
+                        if len(new_cluster) >= 3:
+                            print('cluster', new_cluster)
+                            len_ = len(new_cluster)
+                            for i in range(len_):
+                                new_cluster[i] = self.face_embeddings_register[i]
+                            #print('cluster', new_cluster)
+                            if self.face_tree_cluster is not None:
+                                d = []
+                                for emb_ in new_cluster:
+                                    distance, index = self.face_tree_cluster.query(emb_)
+                                    print('name and distance', self.face_names[index], distance)
+                                    d.append(distance)
+                                d_mean = np.mean(np.array(d))
+                                print('search in clusters', d, d_mean)
+                                if d_mean < FACE_EMBEDDING_THRESHOLD_CLUSTERING:
+                                    print('face exists', d_mean)
+                                    pass
+                                else:
+                                    # A new face is found
+                                    self.register_new_cluster(new_cluster)
+                            else:
+                                # The tree is empty, register this cluster
+                                self.register_new_cluster(new_cluster)
+
+                self.t_update_face_tree = 0
+                print()
+                print()
+
+            self.in_queue.task_done()
+
+    def register_new_cluster(self, cluster):
+        name = str(uuid.uuid4())[0:4] # Assign a random new name
+        self.face_embeddings_cluster.append(cluster)
+        for _ in range(len(cluster)):
+            self.face_names.append(name)
+        while len(self.face_embeddings_cluster) > 32: # Maximum of face to remember
+            removed = self.face_embeddings_cluster.pop(0)
+            for _ in range(len(removed)):
+                self.face_names.pop(0)
+        self.face_tree_cluster = scipy.spatial.KDTree(np.array(self.face_embeddings_cluster).reshape(-1, 128))
+        FaceApplications().tree_updated(self.face_tree_cluster, self.face_names)
+
 class FaceCore(VisionCore):
     """ The singleton that manages all detection """
+
     def _init_derived(self):
         self.__mtcnn = None
         self.__emoc = None
+        self.__facenet = None
 
+        self.tree_queue = Queue()
+        
     def __get_detector_create(self):
         if self.__mtcnn is None:
             print()
@@ -104,21 +199,53 @@ class FaceCore(VisionCore):
             print()
         return self.__emoc
 
+    def __get_facenet_create(self):
+        if self.__facenet is None:
+            print()
+            sys.stdout.write('Loading FaceNet...')
+            self.__facenet = facenet.load_model('../models/facenet/model-20170512-110547.ckpt')
+            sys.stdout.write('done')
+            print()
+        return self.__facenet
+
     def run(self):
         # Initialize required models and sessions
         if self.__mtcnn is None:
             self.__get_detector_create()
         if self.__emoc is None:
             self.__get_emotion_classifier_create()
+        if self.__facenet is None:
+            self.__get_facenet_create()
 
         while True:
-            #grabs data from queue
+            # Get task from input queue
+            t_now = time.time()
+
             task = self.in_queue.get() # queue::get() is blocking by default
 
-            print(task.params)
-            task.params['output_holder'].put({'predictions': self.detect(task.img, task.params)})
+            if time.time() > task.t_expiration:
+                # Threads are busy and fail to get the task in time
+                pass
+            else:
+                #print(threading.current_thread(), 'queue to exec', time.time()*1000 - task.t_queued)
+                #print(task.params)
+                predictions = self.detect(task.img, task.params)
+                
+                if 'embeddings' in predictions and len(predictions['embeddings']):
+                    #print('embeddings', predictions['embeddings'])
+                    FaceApplications().register_embedding(predictions['embeddings'])
+                    names, confidences = FaceApplications().query_embedding(predictions['embeddings'])
+                    confidences = ((np.array(confidences))*1000).astype(dtype=np.int)
+                    predictions['identities'] = {
+                        'name': names,
+                        'confidence': confidences.tolist(),
+                    }
+                    #print(predictions)
+                    predictions.pop('embeddings', None) # embedding is never intended to be returned to client
 
-            #signals to queue job is done
+                task.params['output_holder'].put({'predictions': predictions})
+                print(threading.current_thread(), 'queue to complete', time.time()*1000 - task.t_queued)
+
             self.in_queue.task_done()
 
     def detect(self, img, params):
@@ -130,6 +257,7 @@ class FaceCore(VisionCore):
             'rectangles': [],
             'confidences': [],
             'landmarks': [],
+            'embeddings': [],
             'emotions': [],
             'timing': {},
         }
@@ -139,7 +267,7 @@ class FaceCore(VisionCore):
             model = service['model']
 
             # Limit image size for performance
-            print('service', service)
+            #print('service', service)
             t_ = time.time()
 
             # Prepare parameters
@@ -162,7 +290,7 @@ class FaceCore(VisionCore):
             # For performance reason, resolution is hard-capped at 800, which is suitable for most applications
             if res_cap > 800: res_cap = 800
             elif res_cap <= 0: res_cap = 448 # In case client fail to initialize res_cap yet included options in request
-            print('options', factor, interp)
+            #print('options', factor, interp)
             
             # This is a safe guard to avoid very large image,
             # for best performance, client is responsible to scale the image before upload
@@ -170,7 +298,7 @@ class FaceCore(VisionCore):
             scale_factor = 1. / scale_factor
             predictions['timing']['fit_resize'] = (time.time() - t_) * 1000
 
-            print('mean', np.mean(img), np.mean(resized))
+            #print('mean', np.mean(img), np.mean(resized))
 
             #time_start = time.time()
             #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -184,6 +312,7 @@ class FaceCore(VisionCore):
             predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
 
             # For testing, detect second time with ROIs (like in tracking mode)
+            """
             if len(extents):
                 t_ = time.time()
                 height, width, *_ = resized.shape
@@ -227,6 +356,7 @@ class FaceCore(VisionCore):
                         #print(_extents)
                 predictions['timing']['mtcnn_roi'] = (time.time() - t_) * 1000
                 predictions['timing']['mtcnn_roi_total'] = predictions['timing']['prepare_roi'] + predictions['timing']['mtcnn_roi']
+            """
 
             if len(landmarks):
                 landmarks = np.array(landmarks) * scale_factor
@@ -240,13 +370,16 @@ class FaceCore(VisionCore):
             if model=='a-emoc':
                 facelist = np.zeros((len(extents), 48, 48), dtype=np.float)
                 predictions['timing']['emoc_prepare'] = 0
+            elif model=='fnet':
+                aligned_face_list = np.zeros((len(extents), 160, 160, 3), dtype=np.float)
+                pass
             
-            print()
-            print(extents)
+            #print()
+            #print(extents)
             for i, e in enumerate(extents):
                 #e_ = (Rectangle(r_[0], r_[1], r_[2], r_[3]).to_extent().eval() * scale_factor).astype(dtype=np.int).tolist()
                 r_ = (np.array([e[0], e[1], e[2]-e[0], e[3]-e[1]])*scale_factor).astype(dtype=np.int).tolist()
-                print('extents', i, e, r_)
+                #print('extents', i, e, r_)
                 predictions['rectangles'].append(r_)
                 predictions['confidences'].append(int(e[4]*1000))
                 plist_ = landmarks[i].astype(dtype=np.int).tolist()
@@ -285,6 +418,10 @@ class FaceCore(VisionCore):
                     #cv2.imwrite('./face'+str(i).zfill(3)+'.jpg', face_write)
                     facelist[i:i+1, :, :] = face
                     predictions['timing']['emoc_prepare'] += (time.time() - t_) * 1000
+                elif model=='fnet':
+                    aligned = FaceApplications.align_face(img, landmarks[i], intensity=1., sz=160, ortho=True, expand=1.5)
+                    aligned_face_list[i, :, :, :] = aligned
+                    #print('aligned', aligned.shape)
 
             if model=='a-emoc':
                 t_ = time.time()
@@ -292,6 +429,20 @@ class FaceCore(VisionCore):
                 emotions = emoc_.predict(facelist)
                 predictions['emotions'] = (np.array(emotions)*1000).astype(dtype=np.int).tolist()
                 predictions['timing']['emoc'] = (time.time() - t_) * 1000
+            elif model=='fnet':
+                #print('aligned_face_list', aligned_face_list.shape)
+                t_ = time.time()
+                with self.__get_facenet_create().as_default():
+                    images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
+                    embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
+                    phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+                    feed_dict = { images_placeholder: aligned_face_list, phase_train_placeholder:False }
+                    emb = self.__get_facenet_create().run(embeddings, feed_dict=feed_dict)
+                    #predictions['embeddings'] = np.concatenate((predictions['embeddings'], emb))
+                    predictions['embeddings'] = predictions['embeddings'] + emb.tolist()
+                t_ = time.time() - t_
+                #print('facenet forward', emb.shape, t_*1000)
+                #print()
 
         else:
             # Nothing is requested; useful for measuring overhead
@@ -369,19 +520,70 @@ class VisionMainThread(metaclass=Singleton):
 class FaceApplications(VisionMainThread):
     """ This is for backward compatibility and the interface MUST NOT be changed. """
     def __init__(self):
+        self.threads = []
         self.in_queue = Queue()
-        self.out_queue = Queue()
-        for i in range(2):
-            t = FaceCore(self.in_queue, self.out_queue)
+        self.emb_queue = Queue()
+
+        self.face_tree = None
+        self.face_names = None
+        
+        t = FaceEmbeddingThread(self.emb_queue)
+        t.setDaemon(True)
+        t.start()
+
+        for i in range(2): # Spawn 2 threads
+            t = FaceCore(self.in_queue)
             t.setDaemon(True)
+            self.threads.append(t)
             t.start()
+        
+        # Wait for core initialization
+        #for t in self.threads:
+        #    t.join()
+
         print('FaceApplications singleton initialized')
 
+    def register_embedding(self, embeddings):
+        for emb in embeddings:
+            self.emb_queue.put(emb)
+        #for t in self.threads:
+        #    for emb in embeddings:
+
+    def tree_updated(self, tree, names):
+        self.face_tree = tree
+        self.face_names = names
+
+    def query_embedding(self, embeddings):
+        confidences = np.zeros((len(embeddings),), dtype=np.float)
+        names = []
+        for _ in range(len(embeddings)):
+            names.append('')
+        #print('len of embeddings', len(embeddings), confidences)
+
+        if self.face_tree is not None:
+            embeddings = sklearn.preprocessing.normalize(embeddings)
+            for i, emb in enumerate(embeddings):
+                distance, index = self.face_tree.query(emb, 3)
+                d_mean = np.mean(distance)
+                for j, face_index in enumerate(index):
+                    name = self.face_names[face_index]
+                    #print('neighbor', name, distance[j])
+                if d_mean < FACE_EMBEDDING_THRESHOLD_QUERY:
+                    #print('similar face', distance, index, self.face_names[index[0]])
+                    confidences[i] = 1. - d_mean
+                    names[i] = self.face_names[index[0]]
+        
+        return (names, confidences)
+
     def detect(self, img, params):
-        """ Queue the task in VisionMainThread """
-        print('detect', params)
-        t = DetectionTask(img, params)
-        self.in_queue.put(t)
+        """ Queue the task """
+        print('detect', self.in_queue.qsize())
+        if self.in_queue.qsize() >= 4: # Maximal requests allowed
+            return False
+        else:
+            t = DetectionTask(img, params)
+            self.in_queue.put(t, timeout=0.5)
+            return True
 
     @staticmethod
     def align_face(img, landmarks, intensity=0.5, sz=48, ortho=False, expand=1.0):

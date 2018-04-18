@@ -148,7 +148,6 @@ class ImageHandler(tornado.web.RequestHandler):
 
 class StaticHandler(tornado.web.RequestHandler):
     def get(self, path):
-        print('StaticHandler', path)
         path = os.path.normpath(os.path.join('./server/static', path))
         print('StaticHandler', path)
         try:
@@ -228,7 +227,7 @@ class PredictHandler(tornado.web.RequestHandler):
             if 'timing' in json_data:
                 json_data['timing']['server_rcv'] = time.time() * 1000
 
-            print()
+            print('post')
             """
             - One or multiple predict request could be included in single HTTP POST
             - Each predict request has only one 'media', which contains an image
@@ -274,8 +273,6 @@ class PredictHandler(tornado.web.RequestHandler):
                         self.set_status(400)
                         self.finish("Unable to load media for request " + request['requestId'])
                         return
-                        self.send_error(400, message="Invalid 'media'") # Bad Request
-                        self.finish()
                     service_timing['decode_img'] = (time.time() - t_) * 1000
                     
                     if service['type']=='_void':
@@ -285,12 +282,20 @@ class PredictHandler(tornado.web.RequestHandler):
                         }
                     elif service['type']=='face':
                         face_app = FaceApplications()
-                        face_app.detect(img, params={
+                        params = {
                             'service': service,
                             'output_holder': self.out_queue,
-                        })
-                        output = self.out_queue.get()
-                        print(output)
+                        }
+                        if face_app.detect(img, params=params):
+                            # Call get() to block and wait for detection result
+                            t_ = time.time()
+                            output = self.out_queue.get()
+                            print('.get() latency', (time.time() - t_) * 1000)
+                        else:
+                            # Detection threadings are busy
+                            print('server is busy')
+                            self.set_status(503)
+                            return
                         service['results'] = output['predictions']
                         if 'options' in service: service.pop('options', None)
                         self.out_queue.task_done()
