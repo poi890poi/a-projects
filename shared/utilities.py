@@ -99,6 +99,59 @@ class ImageUtilities():
         return np.copy(img[0:height, 0:width, :])
 
     @staticmethod
+    def calc_iou(r1, r2):
+        x1 = max(r1[0], r2[0])
+        x2 = min(r1[0]+r1[2], r2[0]+r2[2])
+        if x2 < x1:
+            return 0
+        y1 = max(r1[1], r2[1])
+        y2 = min(r1[1]+r1[3], r2[1]+r2[3])
+        if y2 < y1:
+            return 0
+        aoi = (x2-x1)*(y2-y1)
+        return aoi / (r1[2]*r1[3] + r2[2]*r2[3] - aoi)
+
+    @staticmethod
+    def group_rectangles_miniou(rectangles, threshold=0.4):
+        lr = len(rectangles)
+        iou_table = np.zeros((lr, lr), dtype=np.float)
+        for i1, r1 in enumerate(rectangles):
+            for i2, r2 in enumerate(rectangles):
+                if i2 <= i1: continue
+                iou = ImageUtilities.calc_iou(r1, r2)
+                iou_table[i1][i2] = iou
+        for i1, r1 in enumerate(rectangles):
+            for i2, r2 in enumerate(rectangles):
+                if i2 < i1:
+                    iou_table[i1][i2] = iou_table[i2][i1]
+
+        clusters = [[0],]
+        for ir, r in enumerate(rectangles):
+            new_cluster = True
+            for ic, c in enumerate(clusters):
+                if ir in c: # The rectangle is already in the cluster
+                    new_cluster = False
+                    break
+
+                # Find minimal IOU (least overlapped) in the cluster
+                iou = np.zeros((len(c),), dtype=np.float)
+                for r_index, c_member in enumerate(c):
+                    iou[r_index] = iou_table[c_member][ir]
+                min_iou = np.amin(np.array(iou))
+                
+                # Minimal IOU is large enough (overlaps every member in the cluster); add to a existing new cluster
+                if min_iou > threshold:
+                    clusters[ic].append(ir)
+                    new_cluster = False
+                    break
+            
+            # The rectangle is not in any cluster; add a new cluster
+            if new_cluster:
+                clusters.append([ir,])
+        
+        return clusters
+
+    @staticmethod
     def rect_fit_points(points, target_ar=1., expand=2.):
         x = np.min(points[:, 0:1])
         y = np.min(points[:, 1:2])
