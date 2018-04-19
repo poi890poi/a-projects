@@ -227,7 +227,6 @@ class PredictHandler(tornado.web.RequestHandler):
             if 'timing' in json_data:
                 json_data['timing']['server_rcv'] = time.time() * 1000
 
-            print('post')
             """
             - One or multiple predict request could be included in single HTTP POST
             - Each predict request has only one 'media', which contains an image
@@ -291,7 +290,7 @@ class PredictHandler(tornado.web.RequestHandler):
                             # Call get() to block and wait for detection result
                             t_ = time.time()
                             output = self.out_queue.get()
-                            print('.get() latency', (time.time() - t_) * 1000)
+                            #print('.get() latency', (time.time() - t_) * 1000)
                         else:
                             # Detection threadings are busy
                             print('server is busy')
