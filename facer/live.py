@@ -145,6 +145,7 @@ while(True):
                         identity = service['results']['identities']
                         name = identity['name'][i]
                         confidence = identity['confidence'][i]
+                        #confidence = service['results']['confidences'][i]
                         if confidence > 0:
                             tag = name + ' / ' + str(confidence/1000)
                             cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)

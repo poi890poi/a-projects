@@ -285,6 +285,7 @@ class PredictHandler(tornado.web.RequestHandler):
                         params = {
                             'service': service,
                             'output_holder': self.out_queue,
+                            'agent': json_data['agent']
                         }
                         if face_app.detect(img, params=params):
                             # Call get() to block and wait for detection result
