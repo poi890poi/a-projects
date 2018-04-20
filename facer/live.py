@@ -6,6 +6,7 @@ import base64
 import json
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 from queue import Queue, Empty
 import threading
@@ -27,28 +28,31 @@ class ThreadUrl(threading.Thread):
 
             if time.time() > task['timing']['t_expiration']:
                 # Task waiting for too long in the queue; discard it.
-                print('skip frame')
+                #print('skip frame')
+                pass
 
             else:
-                print('frame to http request', time.time()*1000 - task['agent']['t_frame'])
-                
+                delay = time.time()*1000 - task['agent']['t_frame']
+                print('frame to http request', delay, task['requests'][0]['services'][0]['mode'])
+
                 postdata = json.dumps(task)
-            
-                #self.response = None
-                url = 'http://192.168.41.41:9000/predict'
-                request = Request(url, data=postdata.encode())
-                response = json.loads(urlopen(request).read().decode())
-                timing = response['timing']
-                server_time = timing['server_sent'] - timing['server_rcv']
-                total_time = (time.time() - timing['client_sent']) * 1000
-                client_time = total_time - server_time
-                #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
-                response['agent'] = task['agent']
-                self.out_queue.put(response)
-                print('frame to http response', time.time()*1000 - task['agent']['t_frame'])
-                print('response time:', total_time)
-            
-            print()
+                try:
+                    #self.response = None
+                    url = 'http://192.168.41.41:9000/predict'
+                    request = Request(url, data=postdata.encode())
+                    response = json.loads(urlopen(request).read().decode())
+                    timing = response['timing']
+                    server_time = timing['server_sent'] - timing['server_rcv']
+                    total_time = (time.time() - timing['client_sent']) * 1000
+                    client_time = total_time - server_time
+                    #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
+                    response['agent'] = task['agent']
+                    self.out_queue.put(response)
+                    print('frame to http response', time.time()*1000 - task['agent']['t_frame'])
+                    #print('response time:', total_time)
+                    print()
+                except URLError:
+                    pass
                     
             #signals to queue job is done
             self.in_queue.task_done()
@@ -71,6 +75,8 @@ EMOTIONS = ['angry', 'disgusted', 'fearful', 'happy', 'sad', 'surprised', 'neutr
 font = cv2.FONT_HERSHEY_SIMPLEX
 
 last_response = None
+mode = ''
+t_register_expiration = 0
 
 while(True):
     # Capture frame-by-frame
@@ -97,6 +103,7 @@ while(True):
                             "type": "face",
                             #"model": "a-emoc", # Request emotion recognition
                             "model": "fnet",
+                            "mode": mode,
                             "options": {
                                 "res_cap": 448,
                                 "factor": 0.6,
@@ -122,7 +129,7 @@ while(True):
             pass
         else:
             in_queue.put(requests)
-            print('qsize', in_queue.qsize())
+            #print('qsize', in_queue.qsize())
 
         f_ = 0
         t_ = time.time() + interval
@@ -147,7 +154,7 @@ while(True):
                         confidence = identity['confidence'][i]
                         #confidence = service['results']['confidences'][i]
                         if confidence > 0:
-                            tag = name + ' / ' + str(confidence/1000)
+                            tag = name + ' / ' + str(confidence)
                             cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)
 
     osd = [str(time.time()*1000), repr(frame.shape)]
@@ -156,10 +163,17 @@ while(True):
         cv2.putText(frame, line, (10, y_), font, 1, (0, 255, 0), 1, cv2.LINE_AA)
         y_ += 36
 
+    if time.time() > t_register_expiration:
+        mode = ''
+
     # Display the resulting frame
     cv2.imshow('frame', frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    key = cv2.waitKey(1) & 0xFF
+    if key==ord('q'):
         break
+    elif key==ord('r'):
+        mode = 'register'
+        t_register_expiration = time.time() + 0.5
 
 # When everything done, release the capture
 cap.release()

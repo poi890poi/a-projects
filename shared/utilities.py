@@ -12,6 +12,7 @@ import os.path
 import sys, hashlib
 from uuid import uuid4
 import os, stat, shutil
+import json
 
 import random
 
@@ -475,3 +476,9 @@ class ViewportManager(metaclass=Singleton):
     def __exit__(self, exc_type, exc_value, traceback):
         for prefix in self.viewports:
             cv2.destroyWindow(prefix)
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)

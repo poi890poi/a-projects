@@ -18,6 +18,8 @@ from facer.face_app import FaceApplications, DetectionTask
 
 from queue import Queue, Empty
 
+from shared.utilities import NumpyEncoder
+
 class Singleton(type):
     _instances = {}
     def __call__(cls, *args, **kwargs):
@@ -331,7 +333,7 @@ class PredictHandler(tornado.web.RequestHandler):
         json_data['responses'] = json_data['requests']
         json_data.pop('requests', None)
 
-        self.write(json.dumps(json_data))
+        self.write(json.dumps(json_data, cls=NumpyEncoder))
         self.finish()
 
 def make_app():

@@ -2,6 +2,7 @@ from mtcnn import detect_face as FaceDetector
 from facer.emotion import EmotionClassifier
 from shared.utilities import ImageUtilities as imutil
 from shared.utilities import DirectoryWalker as dirwalker
+from shared.utilities import NumpyEncoder
 
 from facenet import facenet
 import sklearn.metrics, sklearn.preprocessing
@@ -24,15 +25,16 @@ from queue import Queue, Empty
 import threading
 
 FACE_EMBEDDING_THRESHOLD_HIGH = 0.5375 # High precision 99%
-#embedding_threshold_query = 0.584375 # High recall 96%
-FACE_EMBEDDING_THRESHOLD_LOW = 0.378125 # Highest precision 99.866777%
+FACE_EMBEDDING_THRESHOLD_RECALL = 0.584375 # High recall 96%
+FACE_EMBEDDING_THRESHOLD_LOW = 0.378125 # Very high precision 99.866777%
 FACE_EMBEDDING_SAMPLE_SIZE = 8
 FACE_RECOGNITION_CONCURRENT = 1
 FACE_RECOGNITION_REMEMBER = 16
 FACE_RECOGNITION_SAVE = '../models/face_registered/embeddings.json'
 INTERVAL_FACE_TREE = 3.
 INTERVAL_FACE_SAVE = 180.
-RUN_MODE_DEBUG = False
+INTERVAL_FACE_IMAGES_SAVE = 180.
+RUN_MODE_DEBUG = True
 
 """
 - Array plane is (custom) defined as coordinate system of y (row) before x (col),
@@ -67,12 +69,6 @@ class Extent:
     def eval(self):
         return self.extent
 
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
-
 class DetectionTask():
     """
     A task is a container to hold input parameters and output results for detection.
@@ -106,175 +102,68 @@ class VisionCoreThread(threading.Thread):
     def run(self):
         raise NotImplementedError('VisionCore::run() must be implemented in derived class')
 
-class FaceEmbeddingThread(VisionCoreThread):
-    def _init_derived(self):
+class FaceEmbeddingAgent():
+    """
+    FaceEmbeddingAgent is an agent-specific object that stores required data for face embedding registering,
+    a process that samples face images, checks if the face is already in database of known faces, add the
+    new faces to database, and create KD tree of the faces to be searched.
+    """
+
+    def __init__(self, agent_id):
+        self.agent_id = agent_id
+        self.t_last_frame = 0
+        self.is_registering = False
+
         self.t_update_face_tree = 0
         self.t_save_face_tree = 0
+        self.t_save_face_images = 0
 
-        # These are for finding cluster candidates to be registered
-        self.face_embeddings_register = {}
-        
-        # These are for registered clusters to be queried
+        self.face_embeddings_candidate = {
+            'embeddings': [],
+            'rectangles': [],
+            'face_images': [],
+            'tree': None,
+        }
+
         self.face_names_cluster = []
         self.face_embeddings_cluster = []
-        self.face_tree_cluster = None
         self.face_images_cluster = []
-
+        self.face_tree_cluster = None
         self.names_to_index = {}
         self.is_tree_dirty = False
-
-        print(threading.current_thread(), 'FaceEmbeddingThread::_init_derived()')
-
-    def run(self):
-        while True:
-            if self.is_init:
-                self.restore_embeddings()
-                self.is_init = False
-
-            t_now = time.time()
-
-            # Get new face embeddings and update KDTree
-            task = self.in_queue.get() # queue::get() is blocking by default
-            #print('get embedding', t_now-task.t_expiration)
-
-            if t_now > task.t_expiration or task.embeddings is None:
-                print('skip outdated embedding', t_now-task.t_expiration)
-                pass
-            else:
-                embeddings = sklearn.preprocessing.normalize(task.embeddings['recognition']['embeddings'])
-                agent_id = task.embeddings['agent']['agentId']
-                names = task.embeddings['names']
-                face_images = task.embeddings['recognition']['images']
-                rectangles = task.embeddings['recognition']['rectangles']
-
-                #print('queried names', names)
-                #print('get embedding', len(embeddings), len(face_images), len(rectangles))
-
-                if agent_id not in self.face_embeddings_register:
-                    self.face_embeddings_register[agent_id] = {
-                        'embeddings': [],
-                        'rectangles': [],
-                        'face_images': [],
-                        'tree': None,
-                    }
-                register = self.face_embeddings_register[agent_id]
-
-                for emb_i, emb in enumerate(embeddings):
-                    if names[emb_i]:
-                        # The face is found in registered faces; append to the existing cluster
-                        index = self.names_to_index[names[emb_i]]
-                        #print('registered faces', names[emb_i], len(self.face_names_cluster), len(self.face_embeddings_cluster), len(self.face_images_cluster))
-                        self.append_cluster(index, emb, face_images[emb_i])
-                    else:
-                        # The face is unknown
-                        register['embeddings'].append(emb)
-                        register['face_images'].append(face_images[emb_i])
-                        register['rectangles'].append(rectangles[emb_i])
-
-                # Each agent samples a limit number of faces for candidates to be registered
-                while len(register['embeddings']) > FACE_EMBEDDING_SAMPLE_SIZE * 4:
-                    register['embeddings'].pop(0)
-                    register['face_images'].pop(0)
-                    register['rectangles'].pop(0)
-
-                #print(threading.current_thread(), 'CHECK UPDATE FACE TREE', t_now-self.t_update_face_tree)
-                # Update KD Tree only every X seconds
-                if self.t_update_face_tree==0:
-                    self.t_update_face_tree = t_now + INTERVAL_FACE_TREE
-                elif t_now > self.t_update_face_tree:
-                    print()
-                    print()
-                    print(threading.current_thread(), 'update face tree', len(register['embeddings']))
-
-                    # Group face embeddings into clusters
-
-                    # 20180419 Lee noted: query_ball_tree() of scipy returns a lot of duplicated clusters and the result is also suboptimal
-                    # Use IOU instead to group candidates
-                    #self.face_tree_register = scipy.spatial.KDTree(register['embeddings'])
-                    #clusters = self.face_tree_register.query_ball_tree(self.face_tree_register, FACE_EMBEDDING_THRESHOLD_LOW)
-                    clusters = imutil.group_rectangles_miniou(register['rectangles'])
-                    if clusters is not None:
-                        #print(clusters)
-                        # Sorting does nothing right now; all clusters are processed, independently
-                        #clusters.sort(key=len, reverse=True)
-                        #print('sorted', clusters)
-                        for ci, new_cluster in enumerate(clusters):
-                            if len(new_cluster) >= FACE_EMBEDDING_SAMPLE_SIZE:
-                                len_ = len(new_cluster)
-
-                                # Discard clusters with faces at different locations; this has no use for IOU clustering
-                                """ # This is required only for clusters from query_ball_tree() of scipy, which is no longer used due to suboptimal results
-                                discard = False
-                                for fi1 in new_cluster:
-                                    for fi2 in new_cluster:
-                                        if fi1!=fi2:
-                                            r1 = register['rectangles'][fi1]
-                                            r2 = register['rectangles'][fi2]
-                                            iou = imutil.calc_iou(r1, r2)
-                                            if iou < 0.5:
-                                                #print('small IOU, discard', iou)
-                                                discard = True
-                                                break
-                                    if discard: break
-                                if discard: continue
-                                """
-                                print('the cluster is valid', ci, len(new_cluster), new_cluster)
-
-                                # Convert index to 128-bytes embedding
-                                face_images = []
-                                for i, member in enumerate(new_cluster):
-                                    new_cluster[i] = register['embeddings'][member]
-                                    face_images.append(register['face_images'][member])
-                                    
-                                #print('cluster', new_cluster)
-                                if self.face_tree_cluster is not None:
-                                    d = []
-                                    new_cluster_ = []
-                                    for emb_ in new_cluster:
-                                        distance, index = self.face_tree_cluster.query(emb_)
-                                        if distance > 0.: # Sample with distance 0.0 is invalid
-                                            #print('name and distance', self.face_names[index], distance)
-                                            d.append(distance)
-                                            new_cluster_.append(emb_)
-                                    #print('distance stats', len(d), d)
-                                    if len(d) >= FACE_EMBEDDING_SAMPLE_SIZE:
-                                        d_mean = np.mean(d)
-                                        if d_mean < FACE_EMBEDDING_THRESHOLD_HIGH:
-                                            # The face is already registered
-                                            print('face already registered', d_mean, d)
-                                            pass
-                                        else:
-                                            # A new face is found
-                                            self.register_new_cluster(new_cluster_, face_images)
-                                else:
-                                    # The tree is empty, register this cluster
-                                    self.register_new_cluster(new_cluster, face_images)
-                            #print('end of one cluster iteration', ci)
-                        #print('exit cluster iterations')
-
-                    self.check_update_tree()
-                    self.t_update_face_tree = 0
-                    print()
-                    print()
-
-            self.in_queue.task_done()
+        self.is_tree_outsync = False
 
     def append_cluster(self, index, embedding, image):
+        # Update an existing cluster with latest face embeddings that match the cluster
         #print('append_cluster', index, len(embedding), len(image))
         self.face_embeddings_cluster[index].append(embedding)
-        if RUN_MODE_DEBUG:
-            self.face_images_cluster[index].append(image)
+        if index < len(self.face_images_cluster):
+            self.face_images_cluster[index].append((np.array(image)*255).astype(dtype=np.uint8))
+
+        # Mix initial samples and appending samples, while keeping at least FACE_EMBEDDING_SAMPLE_SIZE of initial samples
+        if len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 3:
+            if index < len(self.face_images_cluster) and len(self.face_images_cluster[index])==len(self.face_embeddings_cluster[index]):
+                embeddings_shuffle_trim = self.face_embeddings_cluster[index][FACE_EMBEDDING_SAMPLE_SIZE::]
+                images_shuffle_trim = self.face_images_cluster[index][FACE_EMBEDDING_SAMPLE_SIZE::]
+                embeddings_shuffle_trim, images_shuffle_trim = shuffle(embeddings_shuffle_trim, images_shuffle_trim)
+                self.face_embeddings_cluster[index] = self.face_embeddings_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + embeddings_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE]
+                self.face_images_cluster[index] = self.face_images_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + images_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE]
+            else:
+                embeddings_shuffle_trim = self.face_embeddings_cluster[index][FACE_EMBEDDING_SAMPLE_SIZE::]
+                embeddings_shuffle_trim = shuffle(embeddings_shuffle_trim)
+                self.face_embeddings_cluster[index] = self.face_embeddings_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + embeddings_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE]
 
         self.is_tree_dirty = True
 
-    def register_new_cluster(self, cluster, face_images):
+    def register_new_cluster(self, cluster, images):
+        # A new face is found
         print('register_new_cluster', np.array(cluster).shape)
-        name = str(uuid.uuid4())[0:4] # Assign a random new name
+        name = str(uuid.uuid4()) # Assign a random new name
         self.names_to_index[name] = len(self.face_embeddings_cluster)
         self.face_embeddings_cluster.append(cluster)
         self.face_names_cluster.append([name, len(cluster)])
         if RUN_MODE_DEBUG:
-            self.face_images_cluster.append(face_images)
+            self.face_images_cluster.append(list((np.array(images)*255).astype(dtype=np.uint8)))
         
         while len(self.face_embeddings_cluster) > FACE_RECOGNITION_REMEMBER: # Maximum of faces to remember
             name = self.face_names_cluster.pop(0)
@@ -295,9 +184,10 @@ class FaceEmbeddingThread(VisionCoreThread):
             for index, cluster in enumerate(self.face_embeddings_cluster):
                 # Limit length of each cluster
                 
+                """ # The trimming and shuffling was done in append_cluster() to prevent images from accumulating in memory
                 # Shuffle before trimming to mix old and new samples
-                if RUN_MODE_DEBUG:
-                    self.face_embeddings_cluster[index], self.face_images_cluster[index] = shuffle(self.face_embeddings_cluster[index], self.face_images_cluster[index])
+                if index < len(self.face_images_cluster) and len(self.face_embeddings_cluster[index])==len(self.face_images_cluster[index]):
+                    #self.face_embeddings_cluster[index], self.face_images_cluster[index] = shuffle(self.face_embeddings_cluster[index], self.face_images_cluster[index])
                     while len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 2: # Maximum of samples for a face
                         self.face_embeddings_cluster[index].pop(0)
                         self.face_images_cluster[index].pop(0)
@@ -305,6 +195,7 @@ class FaceEmbeddingThread(VisionCoreThread):
                     self.face_embeddings_cluster[index] = shuffle(self.face_embeddings_cluster[index])
                     while len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 2: # Maximum of samples for a face
                         self.face_embeddings_cluster[index].pop(0)
+                """
 
                 self.face_names_cluster[index][1] = len(self.face_embeddings_cluster[index])
 
@@ -314,8 +205,12 @@ class FaceEmbeddingThread(VisionCoreThread):
                     emb_flatten.append(emb)
 
             self.face_tree_cluster = scipy.spatial.KDTree(np.array(emb_flatten).reshape(-1, 128))
-            FaceApplications().tree_updated(self.face_tree_cluster, self.face_names_cluster)
+            FaceApplications().tree_updated(self.agent_id, self.face_tree_cluster, self.face_names_cluster)
+            self.is_tree_outsync = True
 
+        self.is_tree_dirty = False
+
+        if self.is_tree_outsync:
             t_now = time.time()
             if self.t_save_face_tree==0:
                 self.t_save_face_tree = t_now + INTERVAL_FACE_SAVE
@@ -332,31 +227,31 @@ class FaceEmbeddingThread(VisionCoreThread):
                         os.makedirs(dir)
                     print('images', name, len(images))
                     for f_seq, f_img in enumerate(images):
-                        img = (np.array(f_img)*255).astype(dtype=np.uint8)
-                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        #img = (np.array(f_img)*255).astype(dtype=np.uint8)
+                        img = cv2.cvtColor(f_img, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(dir+'/'+str(f_seq).zfill(4)+'.jpg', img)
 
                 json_obj = {
                     'embeddings': self.face_embeddings_cluster,
                     'names': self.face_names_cluster,
-                    'images': self.face_images_cluster,
+                    #'images': self.face_images_cluster,
                     'names_to_index': self.names_to_index,
                 }
                 with open(FACE_RECOGNITION_SAVE, 'w') as fw:
                     fw.write(json.dumps(json_obj, cls=NumpyEncoder))
 
                 self.t_save_face_tree = 0
-
-        self.is_tree_dirty = False
+                self.is_tree_outsync = False
 
     def restore_embeddings(self):
+        # Load face embeddings from disk and update search tree
         print(threading.current_thread(), 'Restoring embeddings from file...')
         try:
             with open(FACE_RECOGNITION_SAVE, 'r') as fr:
                 json_obj = json.loads(fr.read())
             self.face_embeddings_cluster = json_obj['embeddings']
             self.face_names_cluster = json_obj['names']
-            self.face_images_cluster = json_obj['images']
+            if 'images' in json_obj: self.face_images_cluster = json_obj['images']
             if not RUN_MODE_DEBUG:
                 self.face_images_cluster = []
             self.names_to_index = json_obj['names_to_index']
@@ -365,6 +260,167 @@ class FaceEmbeddingThread(VisionCoreThread):
         except FileNotFoundError:
             pass
         print(threading.current_thread(), 'Embeddings restored.')
+
+class FaceEmbeddingThread(VisionCoreThread):
+    """
+    FaceEmbeddingThread:
+    1. Aggregate face embeddings
+    2. Group them with intersection of union (IOU) as clusters
+    3. Search each cluster in database of known faces
+    4. If not found, register the cluster to database of known faces
+    """
+
+    def _init_derived(self):
+        self.agents = {}
+        print(threading.current_thread(), 'FaceEmbeddingThread::_init_derived()')
+
+    def run(self):
+        while True:
+            t_now = time.time()
+
+            # Get new face embeddings and update KDTree
+            task = self.in_queue.get() # queue::get() is blocking by default
+            #print('get embedding', t_now-task.t_expiration)
+
+            if t_now > task.t_expiration or task.embeddings is None:
+                print('skip outdated embedding', t_now-task.t_expiration)
+                pass
+            else:
+                agent_id = task.embeddings['agent']['agentId']
+                if agent_id not in self.agents:
+                    self.agents[agent_id] = FaceEmbeddingAgent(agent_id)
+                    self.agents[agent_id].restore_embeddings()
+                agent = self.agents[agent_id]
+
+                embeddings = sklearn.preprocessing.normalize(task.embeddings['recognition']['embeddings'])
+                names = task.embeddings['names']
+                face_images = task.embeddings['recognition']['images']
+                rectangles = task.embeddings['recognition']['rectangles']
+                is_registering = False
+                if task.embeddings['recognition']['mode']=='register': is_registering = True
+                print('is registering', is_registering, task.embeddings['recognition']['mode'])
+
+                #print('queried names', names)
+                #print('get embedding', len(embeddings), len(face_images), len(rectangles))
+
+                candidate = agent.face_embeddings_candidate
+
+                if is_registering:
+                    if not agent.is_registering:
+                        # Reset candidates when engaging a new session of registering, to prevent mixing faces of different identities
+                        candidate['embeddings'] = []
+                        candidate['face_images'] = []
+                        candidate['rectangles'] = []
+                agent.is_registering = is_registering
+
+                for emb_i, emb in enumerate(embeddings):
+                    if names[emb_i]:
+                        # The face is found in registered faces; append to the existing cluster
+                        index = agent.names_to_index[names[emb_i]]
+                        #print('registered faces', names[emb_i], len(agent.face_names_cluster), len(self.face_embeddings_cluster), len(self.face_images_cluster))
+                        agent.append_cluster(index, emb, face_images[emb_i])
+                    else:
+                        # The face is unknown
+                        if is_registering:
+                            candidate['embeddings'].append(emb)
+                            candidate['face_images'].append(face_images[emb_i])
+                            candidate['rectangles'].append(rectangles[emb_i])
+
+                if not is_registering:
+                    if agent.t_update_face_tree==0:
+                        agent.t_update_face_tree = t_now + INTERVAL_FACE_TREE * 4 # Querying mode updates tree less frequently
+                    elif t_now > agent.t_update_face_tree:
+                        agent.check_update_tree()
+                        agent.t_update_face_tree = 0
+
+                else:
+                    # Each agent samples a limit number of faces for candidates to be registered
+                    while len(candidate['embeddings']) > FACE_EMBEDDING_SAMPLE_SIZE * 2:
+                        candidate['embeddings'].pop(0)
+                        candidate['face_images'].pop(0)
+                        candidate['rectangles'].pop(0)
+
+                    #print(threading.current_thread(), 'CHECK UPDATE FACE TREE', t_now-self.t_update_face_tree)
+                    # Update KD Tree only every X seconds
+                    if agent.t_update_face_tree==0:
+                        agent.t_update_face_tree = t_now + INTERVAL_FACE_TREE
+                    elif t_now > agent.t_update_face_tree:
+                        print()
+                        print()
+                        print(threading.current_thread(), 'update face tree', len(candidate['embeddings']))
+
+                        # Group face embeddings into clusters
+
+                        # 20180419 Lee noted: query_ball_tree() of scipy returns a lot of duplicated clusters and the result is also suboptimal
+                        # Use IOU instead to group candidates
+                        #self.face_tree_register = scipy.spatial.KDTree(register['embeddings'])
+                        #clusters = self.face_tree_register.query_ball_tree(self.face_tree_register, FACE_EMBEDDING_THRESHOLD_LOW)
+                        clusters = imutil.group_rectangles_miniou(candidate['rectangles'])
+                        if clusters is not None:
+                            #print(clusters)
+                            # Sorting does nothing right now; all clusters are processed, independently
+                            #clusters.sort(key=len, reverse=True)
+                            #print('sorted', clusters)
+                            for ci, new_cluster in enumerate(clusters):
+                                if len(new_cluster) >= FACE_EMBEDDING_SAMPLE_SIZE:
+                                    len_ = len(new_cluster)
+
+                                    # Discard clusters with faces at different locations; this has no use for IOU clustering
+                                    """ # This is required only for clusters from query_ball_tree() of scipy, which is no longer used due to suboptimal results
+                                    discard = False
+                                    for fi1 in new_cluster:
+                                        for fi2 in new_cluster:
+                                            if fi1!=fi2:
+                                                r1 = candidate['rectangles'][fi1]
+                                                r2 = candidate['rectangles'][fi2]
+                                                iou = imutil.calc_iou(r1, r2)
+                                                if iou < 0.5:
+                                                    #print('small IOU, discard', iou)
+                                                    discard = True
+                                                    break
+                                        if discard: break
+                                    if discard: continue
+                                    """
+                                    print('the cluster is valid', ci, len(new_cluster), new_cluster)
+
+                                    # Convert index to 128-bytes embedding
+                                    face_images = []
+                                    for i, member in enumerate(new_cluster):
+                                        new_cluster[i] = candidate['embeddings'][member]
+                                        face_images.append(candidate['face_images'][member])
+                                        
+                                    #print('cluster', new_cluster)
+                                    if agent.face_tree_cluster is not None:
+                                        d = []
+                                        new_cluster_ = []
+                                        for emb_ in new_cluster:
+                                            distance, index = agent.face_tree_cluster.query(emb_)
+                                            if distance > 0.: # Sample with distance 0.0 is invalid
+                                                #print('name and distance', self.face_names[index], distance)
+                                                d.append(distance)
+                                                new_cluster_.append(emb_)
+                                        #print('distance stats', len(d), d)
+                                        if len(d) >= FACE_EMBEDDING_SAMPLE_SIZE:
+                                            d_mean = np.mean(d)
+                                            if d_mean < FACE_EMBEDDING_THRESHOLD_LOW:
+                                                # The face is already registered
+                                                print('face already registered', d_mean, d)
+                                                pass
+                                            else:
+                                                # A new face is found
+                                                agent.register_new_cluster(new_cluster_, face_images)
+                                    else:
+                                        # The tree is empty, register this cluster
+                                        agent.register_new_cluster(new_cluster, face_images)
+                                #print('end of one cluster iteration', ci)
+                            #print('exit cluster iterations')
+
+                        agent.check_update_tree()
+                        agent.t_update_face_tree = 0
+                        print()
+                        print()
+
+            self.in_queue.task_done()
 
 class FaceDetectionThread(VisionCoreThread):
     """ The singleton that manages all detection """
@@ -432,8 +488,9 @@ class FaceDetectionThread(VisionCoreThread):
                 
                 if 'recognition' in predictions and len(predictions['recognition']['rectangles']):
                     #print('embeddings', predictions['embeddings'])
-                    names_, confidences_ = FaceApplications().query_embedding(predictions['recognition']['embeddings'])
+                    names_, confidences_ = FaceApplications().query_embedding(task.params['agent']['agentId'], predictions['recognition']['embeddings'])
 
+                    # Register faces only on request to prevent false positive new face registering
                     task_embeddings = {
                         'agent': task.params['agent'],
                         'names': names_,
@@ -448,10 +505,9 @@ class FaceDetectionThread(VisionCoreThread):
                     for s_index, a_index in enumerate(predictions['recognition']['index']):
                         names[a_index] = names_[s_index]
                         confidences[a_index] = confidences_[s_index]
-                    confidences = ((np.array(confidences))*1000).astype(dtype=np.int)
                     predictions['identities'] = {
                         'name': names,
-                        'confidence': confidences.tolist(),
+                        'confidence': confidences,
                     }
                     #print(predictions)
                     predictions.pop('recognition', None) # embeddings are not supposed to be returned to client
@@ -483,6 +539,10 @@ class FaceDetectionThread(VisionCoreThread):
             #{'type': 'face', 'options': {'resultsLimit': 5}, 'model': '12-net'}
             service = params['service']
             model = service['model']
+
+            mode = ''
+            if 'mode' in service: mode = service['mode']
+            print('service mode', mode)
 
             # Limit image size for performance
             #print('service', service)
@@ -601,7 +661,7 @@ class FaceDetectionThread(VisionCoreThread):
                 r_ = (np.array([e[0], e[1], e[2]-e[0], e[3]-e[1]])*scale_factor).astype(dtype=np.int).tolist()
                 #print('extents', i, e, r_)
                 predictions['rectangles'].append(r_)
-                predictions['confidences'].append(int(e[4]*1000))
+                predictions['confidences'].append(e[4])
                 plist_ = landmarks[i].astype(dtype=np.int).tolist()
                 predictions['landmarks'].append(plist_)
                 if model=='a-emoc':
@@ -647,8 +707,8 @@ class FaceDetectionThread(VisionCoreThread):
             
             # Sort faces by sorting_index and select first N faces for computation intensive operations, e.g., facenet embedding extraction
             better_faces = sorted(sorting_index, key=sorting_index.get, reverse=True)
-            better_faces = better_faces[0:min(FACE_RECOGNITION_CONCURRENT, len(better_faces))]
-            print('sort', sorting_index, better_faces)
+            better_faces = better_faces[0:FACE_RECOGNITION_CONCURRENT]
+            #print('sort', sorting_index, better_faces)
             better_aligned_face_list = np.zeros((len(better_faces), 160, 160, 3), dtype=np.float)
             better_rectangles = []
             for better_face_index in range(len(better_faces)):
@@ -659,7 +719,7 @@ class FaceDetectionThread(VisionCoreThread):
                 t_ = time.time()
                 emoc_ = self.__get_emotion_classifier_create()
                 emotions = emoc_.predict(facelist)
-                predictions['emotions'] = (np.array(emotions)*1000).astype(dtype=np.int).tolist()
+                predictions['emotions'] = emotions
                 predictions['timing']['emoc'] = (time.time() - t_) * 1000
             elif model=='fnet':
                 #print('aligned_face_list', aligned_face_list.shape)
@@ -675,6 +735,7 @@ class FaceDetectionThread(VisionCoreThread):
                     predictions['recognition']['rectangles'] = predictions['recognition']['rectangles'] + better_rectangles
                     predictions['recognition']['embeddings'] = predictions['recognition']['embeddings'] + emb.tolist()
                     predictions['recognition']['images'] = predictions['recognition']['images'] + better_aligned_face_list.tolist()
+                predictions['recognition']['mode'] = mode
                 t_ = time.time() - t_
                 #print('facenet forward', emb.shape, t_*1000)
                 #print()
@@ -759,8 +820,8 @@ class FaceApplications(VisionMainThread):
         self.in_queue = Queue()
         self.emb_queue = Queue()
 
-        self.face_tree = None
-        self.face_names_flatten = None
+        self.face_tree = {}
+        self.face_names_flatten = {}
         
         t = FaceEmbeddingThread(self.emb_queue)
         t.setDaemon(True)
@@ -784,35 +845,37 @@ class FaceApplications(VisionMainThread):
         print('FaceApplications singleton initialized')
 
     def register_embedding(self, task_embeddings):
+        # Queue face embedding to be processed by FaceEmbeddingThread to find candidates to be registered to database of known faces
         emb_task = DetectionTask(None, None)
         emb_task.embeddings = task_embeddings
         self.emb_queue.put(emb_task)
         #print('register_embedding', self.emb_queue.qsize(), task_embeddings['agent'])
 
-    def tree_updated(self, tree, names_cluster):
-        self.face_tree = tree
-        self.face_names_flatten = []
+    def tree_updated(self, agent_id, tree, names_cluster):
+        # Notified by FaceEmbeddingThread that search tree of known faces is updated
+        self.face_tree[agent_id] = tree
+        self.face_names_flatten[agent_id] = []
         print('tree_updated', len(names_cluster))
         for name, count in names_cluster:
             for _ in range(count):
-                self.face_names_flatten.append(name)
+                self.face_names_flatten[agent_id].append(name)
 
-    def query_embedding(self, embeddings):
+    def query_embedding(self, agent_id, embeddings):
         confidences = np.zeros((len(embeddings),), dtype=np.float)
         names = []
         for _ in range(len(embeddings)):
             names.append('')
         #print('len of embeddings', len(embeddings), confidences)
 
-        if self.face_tree is not None:
+        if agent_id in self.face_tree:
             embeddings = sklearn.preprocessing.normalize(embeddings)
             for i, emb in enumerate(embeddings):
-                distance, index = self.face_tree.query(emb, FACE_EMBEDDING_SAMPLE_SIZE)
+                distance, index = self.face_tree[agent_id].query(emb, FACE_EMBEDDING_SAMPLE_SIZE)
                 name_freq = {}
                 name_freq_max = 0
                 #print('closet neighbors', index)
                 for j, face_index in enumerate(index):
-                    name = self.face_names_flatten[face_index]
+                    name = self.face_names_flatten[agent_id][face_index]
                     if name in name_freq:
                         name_freq[name] = name_freq[name] + 1
                     else:
@@ -824,11 +887,11 @@ class FaceApplications(VisionMainThread):
                 if name_freq_max*2 >= FACE_EMBEDDING_SAMPLE_SIZE:
                     d = []
                     for j, face_index in enumerate(index):
-                        if self.face_names_flatten[face_index]==name_freq_name:
+                        if self.face_names_flatten[agent_id][face_index]==name_freq_name:
                             d.append(distance[j])
                     d_mean = np.mean(d)
-                    if d_mean < FACE_EMBEDDING_THRESHOLD_LOW:
-                        #print('similar face', distance, index, self.face_names_flatten[index[0]])
+                    if d_mean < FACE_EMBEDDING_THRESHOLD_RECALL:
+                        #print('similar face', distance, index, self.face_names_flatten[agent_id][index[0]])
                         confidences[i] = 1. - d_mean
                         names[i] = name_freq_name
         
