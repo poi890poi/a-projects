@@ -7,6 +7,7 @@ import json
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import URLError
+import urllib3
 
 from queue import Queue, Empty
 import threading
@@ -22,6 +23,7 @@ class ThreadUrl(threading.Thread):
         self.out_queue = out_queue
  
     def run(self):
+        http = urllib3.PoolManager()
         while True:
             #grabs data from queue
             task = self.in_queue.get()
@@ -39,8 +41,8 @@ class ThreadUrl(threading.Thread):
                 try:
                     #self.response = None
                     url = 'http://192.168.41.41:9000/predict'
-                    request = Request(url, data=postdata.encode())
-                    response = json.loads(urlopen(request).read().decode())
+                    r = http.request('POST', url, body=postdata.encode())
+                    response = json.loads(r.data.decode())
                     timing = response['timing']
                     server_time = timing['server_sent'] - timing['server_rcv']
                     total_time = (time.time() - timing['client_sent']) * 1000
@@ -81,6 +83,8 @@ t_register_expiration = 0
 while(True):
     # Capture frame-by-frame
     ret, frame = cap.read()
+    if frame is None:
+        continue
     t_frame = time.time() * 1000
 
     # Our operations on the frame come here
