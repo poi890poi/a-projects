@@ -41,6 +41,7 @@ class ThreadUrl(threading.Thread):
                 try:
                     #self.response = None
                     url = 'http://192.168.41.41:9000/predict'
+                    #url = 'http://10.129.11.4:9000/predict'
                     r = http.request('POST', url, body=postdata.encode())
                     response = json.loads(r.data.decode())
                     timing = response['timing']
@@ -121,6 +122,7 @@ while(True):
             'agent': {
                 'agentId': '192.168.41.41',
                 't_frame': t_frame,
+                'debug': 1,
             },
             'timing': {
                 'client_sent': time.time(),
@@ -158,7 +160,7 @@ while(True):
                         confidence = identity['confidence'][i]
                         #confidence = service['results']['confidences'][i]
                         if confidence > 0:
-                            tag = name + ' / ' + str(confidence)
+                            tag = name + ' / ' + str(round(confidence, 2))
                             cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)
 
     osd = [str(time.time()*1000), repr(frame.shape)]

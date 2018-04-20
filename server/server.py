@@ -19,6 +19,7 @@ from facer.face_app import FaceApplications, DetectionTask
 from queue import Queue, Empty
 
 from shared.utilities import NumpyEncoder
+from shared.alogger import *
 
 class Singleton(type):
     _instances = {}
@@ -205,6 +206,7 @@ class PredictHandler(tornado.web.RequestHandler):
 
     def post(self):
         #self.get_argument('username')
+        info('POST request from: ' + self.request.remote_ip)
 
         try:
             self.out_queue
@@ -295,7 +297,7 @@ class PredictHandler(tornado.web.RequestHandler):
                             #print('.get() latency', (time.time() - t_) * 1000)
                         else:
                             # Detection threadings are busy
-                            print('server is busy')
+                            warn('Server is busy')
                             self.set_status(503)
                             return
                         service['results'] = output['predictions']
@@ -307,7 +309,6 @@ class PredictHandler(tornado.web.RequestHandler):
                         classifier = FaceClassifier()
                         classifier.init()
                         rects, predictions, timing, fdetect_result = classifier.detect(request['media'])
-                        print(timing)
                         i = 0
                         for rect in rects:
                             print(rect, predictions[i])
@@ -333,7 +334,11 @@ class PredictHandler(tornado.web.RequestHandler):
         json_data['responses'] = json_data['requests']
         json_data.pop('requests', None)
 
-        self.write(json.dumps(json_data, cls=NumpyEncoder))
+        json_str = json.dumps(json_data, cls=NumpyEncoder)
+        if 'agent' in json_data and 'debug' in json_data['agent'] and json_data['agent']['debug']:
+            info('Detection request ' + json_str)
+
+        self.write(json_str)
         self.finish()
 
 def make_app():
@@ -346,7 +351,7 @@ def make_app():
     ])
 
 def server_start(args, port=9000):
-    print('Serving tornado server on port', port)
+    info('Serving tornado server on port ' + str(port))
     FaceApplications() # Initialize face applications singleton
     app = make_app()
     app.listen(port)

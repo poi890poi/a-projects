@@ -3,6 +3,7 @@ from facer.emotion import EmotionClassifier
 from shared.utilities import ImageUtilities as imutil
 from shared.utilities import DirectoryWalker as dirwalker
 from shared.utilities import NumpyEncoder
+from shared.alogger import *
 
 from facenet import facenet
 import sklearn.metrics, sklearn.preprocessing
@@ -272,7 +273,7 @@ class FaceEmbeddingThread(VisionCoreThread):
 
     def _init_derived(self):
         self.agents = {}
-        print(threading.current_thread(), 'FaceEmbeddingThread::_init_derived()')
+        #print(threading.current_thread(), 'FaceEmbeddingThread::_init_derived()')
 
     def run(self):
         while True:
@@ -283,7 +284,7 @@ class FaceEmbeddingThread(VisionCoreThread):
             #print('get embedding', t_now-task.t_expiration)
 
             if t_now > task.t_expiration or task.embeddings is None:
-                print('skip outdated embedding', t_now-task.t_expiration)
+                warn('Skip outdated embedding, delay: {}'.format((t_now-task.t_expiration)*1000))
                 pass
             else:
                 agent_id = task.embeddings['agent']['agentId']
@@ -345,9 +346,7 @@ class FaceEmbeddingThread(VisionCoreThread):
                     if agent.t_update_face_tree==0:
                         agent.t_update_face_tree = t_now + INTERVAL_FACE_TREE
                     elif t_now > agent.t_update_face_tree:
-                        print()
-                        print()
-                        print(threading.current_thread(), 'update face tree', len(candidate['embeddings']))
+                        #print(threading.current_thread(), 'update face tree', len(candidate['embeddings']))
 
                         # Group face embeddings into clusters
 
@@ -417,8 +416,6 @@ class FaceEmbeddingThread(VisionCoreThread):
 
                         agent.check_update_tree()
                         agent.t_update_face_tree = 0
-                        print()
-                        print()
 
             self.in_queue.task_done()
 
@@ -434,33 +431,27 @@ class FaceDetectionThread(VisionCoreThread):
         
     def __get_detector_create(self):
         if self.__mtcnn is None:
-            print()
-            sys.stdout.write('Loading MTCNN model for face detection...')
+            info('Loading MTCNN, thread: {}'.format(threading.current_thread()))
             self.__mtcnn = {}
             self.__mtcnn['session'] = tf.Session()
             #self.__pnet, self.__rnet, self.__onet = FaceDetector.create_mtcnn(self.__mtcnn, None)
             self.__mtcnn['pnet'], self.__mtcnn['rnet'], self.__mtcnn['onet'] = FaceDetector.create_mtcnn(self.__mtcnn['session'], None)
-            sys.stdout.write('done')
-            print()
+            info('MTCNN loaded, thread: {}'.format(threading.current_thread()))
         return self.__mtcnn
 
     def __get_emotion_classifier_create(self):
         if self.__emoc is None:
-            print()
-            sys.stdout.write('Loading 4-layers AlexNet model for emotion classifier...')
+            info('Loading emotion classifier, thread: {}'.format(threading.current_thread()))
             self.__emoc = EmotionClassifier()
             self.__emoc.build_network(None)
-            sys.stdout.write('done')
-            print()
+            info('Emotion classifier loaded, thread: {}'.format(threading.current_thread()))
         return self.__emoc
 
     def __get_facenet_create(self):
         if self.__facenet is None:
-            print()
-            sys.stdout.write('Loading FaceNet...')
+            info('Loading FaceNet, thread: {}'.format(threading.current_thread()))
             self.__facenet = facenet.load_model('../models/facenet/model-20170512-110547.ckpt')
-            sys.stdout.write('done')
-            print()
+            info('FaceNet loaded, thread: {}'.format(threading.current_thread()))
         return self.__facenet
 
     def run(self):
@@ -513,7 +504,7 @@ class FaceDetectionThread(VisionCoreThread):
                     predictions.pop('recognition', None) # embeddings are not supposed to be returned to client
 
                 task.params['output_holder'].put({'predictions': predictions})
-                print(threading.current_thread(), 'queue to complete', time.time()*1000 - task.t_queued)
+                info('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000 - task.t_queued, threading.current_thread()))
 
             self.in_queue.task_done()
 
@@ -542,7 +533,6 @@ class FaceDetectionThread(VisionCoreThread):
 
             mode = ''
             if 'mode' in service: mode = service['mode']
-            print('service mode', mode)
 
             # Limit image size for performance
             #print('service', service)
@@ -842,7 +832,7 @@ class FaceApplications(VisionMainThread):
         #for t in self.core_threads:
         #    t.join()
 
-        print('FaceApplications singleton initialized')
+        info('FaceApplications singleton initializing...')
 
     def register_embedding(self, task_embeddings):
         # Queue face embedding to be processed by FaceEmbeddingThread to find candidates to be registered to database of known faces
@@ -855,7 +845,7 @@ class FaceApplications(VisionMainThread):
         # Notified by FaceEmbeddingThread that search tree of known faces is updated
         self.face_tree[agent_id] = tree
         self.face_names_flatten[agent_id] = []
-        print('tree_updated', len(names_cluster))
+        info('Tree updated, agent: {}, faces: {}'.format(agent_id, len(names_cluster)))
         for name, count in names_cluster:
             for _ in range(count):
                 self.face_names_flatten[agent_id].append(name)
