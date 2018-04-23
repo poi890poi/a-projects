@@ -18,8 +18,7 @@ logger.addHandler(sh)
 logger.addHandler(fh)
 
 def my_handler(type, value, tb):
-    #logger.exception('Uncaught exception: {0}'.format(str(value)))
-    logger.error('\n'.join(['Uncaught Exception'] + list(traceback.format_tb(tb, limit=32))))
+    logger.error('\n'.join(['Uncaught Exception'] + list(traceback.format_tb(tb, limit=32)) + [type.__name__+':'+str(value)]))
 
 # Install exception handler
 sys.excepthook = my_handler

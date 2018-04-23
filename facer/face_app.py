@@ -101,7 +101,7 @@ class ThreadBase(threading.Thread):
 
     def _on_crash(self):
         exc_type, exc_value, exc_traceback = sys.exc_info()
-        error('\n'.join(['Thread Exception: {}'.format(threading.current_thread())]+list(traceback.format_tb(exc_traceback, limit=32))))
+        error('\n'.join(['Thread Exception: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [type.__name__+': '+str(value),]))
         self.is_crashed = True
 
     def _init_derived(self):
@@ -215,17 +215,18 @@ class FaceEmbeddingAgent():
             self.face_tree_cluster = scipy.spatial.KDTree(np.array(emb_flatten).reshape(-1, 128))
             FaceApplications().tree_updated(self.agent_id, self.face_tree_cluster, self.face_names_cluster)
             self.is_tree_outsync = True
+            if self.t_save_face_tree==0: self.t_save_face_tree = time.time() + INTERVAL_FACE_SAVE
 
         self.is_tree_dirty = False
 
         if self.is_tree_outsync:
             t_now = time.time()
-            if self.t_save_face_tree==0:
-                self.t_save_face_tree = t_now + INTERVAL_FACE_SAVE
-            elif t_now > self.t_save_face_tree:
+            debug('Check saving embeddings to file... {}'.format(t_now-self.t_save_face_tree))
+            if self.t_save_face_tree > 0 and t_now > self.t_save_face_tree:
                 print()
                 print()
                 print(threading.current_thread(), 'Saving embeddings to file...', len(self.face_images_cluster))
+                debug('Saving embeddings to file... {}'.format(len(self.face_images_cluster)))
                 # Save registered faces as files
                 # This is for debugging and has significant impact on performance
                 for index, images in enumerate(self.face_images_cluster):
@@ -445,41 +446,8 @@ class FaceDetectionThread(ThreadBase):
     """ The singleton that manages all detection """
 
     def _init_derived(self):
-        self.__mtcnn = None
-        self.__emoc = None
-        self.__facenet = None
-
         self.tree_queue = Queue()
         
-    def __get_detector_create(self):
-        if self.__mtcnn is None:
-            info('Loading MTCNN, thread: {}'.format(threading.current_thread()))
-            self.__mtcnn = {}
-            self.__mtcnn['session'] = tf.Session()
-            #self.__pnet, self.__rnet, self.__onet = FaceDetector.create_mtcnn(self.__mtcnn, None)
-            self.__mtcnn['pnet'], self.__mtcnn['rnet'], self.__mtcnn['onet'] = FaceDetector.create_mtcnn(self.__mtcnn['session'], None)
-            info('MTCNN loaded, thread: {}'.format(threading.current_thread()))
-        return self.__mtcnn
-
-    def __get_emotion_classifier_create(self):
-        if self.__emoc is None:
-            info('Loading emotion classifier, thread: {}'.format(threading.current_thread()))
-            self.__emoc = EmotionClassifier()
-            self.__emoc.build_network(None)
-            info('Emotion classifier loaded, thread: {}'.format(threading.current_thread()))
-        return self.__emoc
-
-    def __get_facenet_create(self):
-        if self.__facenet is None:
-            info('Loading FaceNet, thread: {}'.format(threading.current_thread()))
-            self.__facenet = facenet.load_model('../models/facenet/model-20170512-110547.ckpt')
-            with self.__facenet:
-                images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-                embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-                phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-            info('FaceNet loaded, thread: {}'.format(threading.current_thread()))
-        return self.__facenet
-
     def run(self):
         while True:
             if self.is_crashed:
@@ -491,14 +459,7 @@ class FaceDetectionThread(ThreadBase):
                 # Do initialization here...
                 # Initialize required models and sessions
                 info('THREAD INITIALIZATION: {}'.format(threading.current_thread()))
-                if self.__mtcnn is None:
-                    self.__get_detector_create()
-                if self.__emoc is None:
-                    self.__get_emotion_classifier_create()
-                if self.__facenet is None:
-                    self.__get_facenet_create()
                 self.is_standby = True
-                info('THREAD INITIALIZATION DONE: {}'.format(threading.current_thread()))
                 continue
 
             try:
@@ -613,7 +574,7 @@ class FaceDetectionThread(ThreadBase):
             #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             # MTCNN face detection
             t_ = time.time()
-            detector = self.__get_detector_create()
+            detector = FaceApplications().get_detector_create()
             pnet = detector['pnet']
             rnet = detector['rnet']
             onet = detector['onet']
@@ -748,19 +709,22 @@ class FaceDetectionThread(ThreadBase):
 
             if model=='a-emoc':
                 t_ = time.time()
-                emoc_ = self.__get_emotion_classifier_create()
+                emoc_ = FaceApplications().get_emotion_classifier_create()
                 emotions = emoc_.predict(facelist)
                 predictions['emotions'] = emotions
                 predictions['timing']['emoc'] = (time.time() - t_) * 1000
             elif model=='fnet':
                 #print('aligned_face_list', aligned_face_list.shape)
                 t_ = time.time()
-                with self.__get_facenet_create().as_default():
-                    images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
+                facenet_ = FaceApplications().get_facenet_create()
+                #with facenet_.as_default():
+                if True:
+                    """images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
                     embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
                     phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-                    feed_dict = { images_placeholder: better_aligned_face_list, phase_train_placeholder:False }
-                    emb = self.__get_facenet_create().run(embeddings, feed_dict=feed_dict)
+                    feed_dict = { images_placeholder: better_aligned_face_list, phase_train_placeholder: False }
+                    emb = facenet_.run(embeddings, feed_dict=feed_dict)"""
+                    emb = facenet_(better_aligned_face_list)
                     #predictions['embeddings'] = np.concatenate((predictions['embeddings'], emb))
                     predictions['recognition']['index'] = better_faces
                     predictions['recognition']['rectangles'] = predictions['recognition']['rectangles'] + better_rectangles
@@ -796,7 +760,7 @@ class FaceDetectionThread(ThreadBase):
             if img is None:break
             img = (img.astype(dtype=np.float32))/255
 
-            detector = self.__get_detector_create()
+            detector = FaceApplications().get_detector_create()
             pnet = detector['pnet']
             rnet = detector['rnet']
             onet = detector['onet']
@@ -847,6 +811,14 @@ class VisionMainThread(metaclass=Singleton):
 class FaceApplications(VisionMainThread):
     """ This is for backward compatibility and the interface MUST NOT be changed. """
     def __init__(self):
+        # Tensorflow sessions are thread-safe and can be called from multple threads simultaneously
+        self.__mtcnn = None
+        self.__emoc = None
+        self.__facenet = None
+        self.get_detector_create()
+        self.get_emotion_classifier_create()
+        self.get_facenet_create()
+
         self.core_threads = []
         self.in_queue = Queue()
         self.emb_queue = Queue()
@@ -883,6 +855,31 @@ class FaceApplications(VisionMainThread):
         #    t.join()
 
         info('FaceApplications STANDBY: {}'.format(threading.current_thread()))
+
+    def get_detector_create(self):
+        if self.__mtcnn is None:
+            info('Loading MTCNN, thread: {}'.format(threading.current_thread()))
+            self.__mtcnn = {}
+            self.__mtcnn['session'] = tf.Session()
+            #self.__pnet, self.__rnet, self.__onet = FaceDetector.create_mtcnn(self.__mtcnn, None)
+            self.__mtcnn['pnet'], self.__mtcnn['rnet'], self.__mtcnn['onet'] = FaceDetector.create_mtcnn(self.__mtcnn['session'], None)
+            info('MTCNN loaded, thread: {}'.format(threading.current_thread()))
+        return self.__mtcnn
+
+    def get_emotion_classifier_create(self):
+        if self.__emoc is None:
+            info('Loading emotion classifier, thread: {}'.format(threading.current_thread()))
+            self.__emoc = EmotionClassifier()
+            self.__emoc.build_network(None)
+            info('Emotion classifier loaded, thread: {}'.format(threading.current_thread()))
+        return self.__emoc
+
+    def get_facenet_create(self):
+        if self.__facenet is None:
+            info('Loading FaceNet, thread: {}'.format(threading.current_thread()))
+            self.__facenet = facenet.load_model('../models/facenet/model-20170512-110547.ckpt')
+            info('FaceNet loaded, thread: {}'.format(threading.current_thread()))
+        return self.__facenet
 
     def register_embedding(self, task_embeddings):
         # Queue face embedding to be processed by FaceEmbeddingThread to find candidates to be registered to database of known faces
