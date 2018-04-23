@@ -336,7 +336,7 @@ class PredictHandler(tornado.web.RequestHandler):
 
         json_str = json.dumps(json_data, cls=NumpyEncoder)
         if 'agent' in json_data and 'debug' in json_data['agent'] and json_data['agent']['debug']:
-            info('Detection request ' + json_str)
+            debug('Detection request ' + json_str)
 
         self.write(json_str)
         self.finish()
