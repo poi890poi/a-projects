@@ -156,7 +156,7 @@ while(True):
                         cv2.putText(frame, EMOTIONS[np.argmax(service['results']['emotions'][i])], (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)
                     if 'identities' in service['results']:
                         identity = service['results']['identities']
-                        name = identity['name'][i]
+                        name = identity['name'][i][0:4]
                         confidence = identity['confidence'][i]
                         #confidence = service['results']['confidences'][i]
                         if confidence > 0:
@@ -164,6 +164,8 @@ while(True):
                             cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 0, 255), 1, cv2.LINE_AA)
 
     osd = [str(time.time()*1000), repr(frame.shape)]
+    if mode=='register':
+        osd.append('REGISTERING NEW FACE...')
     y_ = 30
     for line in osd:
         cv2.putText(frame, line, (10, y_), font, 1, (0, 255, 0), 1, cv2.LINE_AA)

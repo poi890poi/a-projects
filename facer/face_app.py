@@ -101,7 +101,7 @@ class ThreadBase(threading.Thread):
 
     def _on_crash(self):
         exc_type, exc_value, exc_traceback = sys.exc_info()
-        error('\n'.join(['Thread Exception: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [type.__name__+': '+str(value),]))
+        error('\n'.join(['Thread Exception: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
         self.is_crashed = True
 
     def _init_derived(self):
@@ -171,7 +171,7 @@ class FaceEmbeddingAgent():
         self.face_embeddings_cluster.append(cluster)
         self.face_names_cluster.append([name, len(cluster)])
         if RUN_MODE_DEBUG:
-            self.face_images_cluster.append(list((np.array(images)*255).astype(dtype=np.uint8)))
+            self.face_images_cluster.append((np.array(images)*255).astype(dtype=np.uint8))
         
         while len(self.face_embeddings_cluster) > FACE_RECOGNITION_REMEMBER: # Maximum of faces to remember
             name = self.face_names_cluster.pop(0)
@@ -184,74 +184,78 @@ class FaceEmbeddingAgent():
 
     def check_update_tree(self):
         #print('check_update_tree', self.is_tree_dirty)
-        if self.is_tree_dirty:
-            print('check_update_tree', len(self.face_embeddings_cluster), len(self.face_images_cluster))
-            # Flatten the list of lists with varying length
-            emb_flatten = []
-            #print('names', self.face_names_cluster)
-            for index, cluster in enumerate(self.face_embeddings_cluster):
-                # Limit length of each cluster
-                
-                """ # The trimming and shuffling was done in append_cluster() to prevent images from accumulating in memory
-                # Shuffle before trimming to mix old and new samples
-                if index < len(self.face_images_cluster) and len(self.face_embeddings_cluster[index])==len(self.face_images_cluster[index]):
-                    #self.face_embeddings_cluster[index], self.face_images_cluster[index] = shuffle(self.face_embeddings_cluster[index], self.face_images_cluster[index])
-                    while len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 2: # Maximum of samples for a face
-                        self.face_embeddings_cluster[index].pop(0)
-                        self.face_images_cluster[index].pop(0)
-                else:
-                    self.face_embeddings_cluster[index] = shuffle(self.face_embeddings_cluster[index])
-                    while len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 2: # Maximum of samples for a face
-                        self.face_embeddings_cluster[index].pop(0)
-                """
+        try:
+            if self.is_tree_dirty:
+                print('check_update_tree', len(self.face_embeddings_cluster), len(self.face_images_cluster))
+                # Flatten the list of lists with varying length
+                emb_flatten = []
+                #print('names', self.face_names_cluster)
+                for index, cluster in enumerate(self.face_embeddings_cluster):
+                    # Limit length of each cluster
+                    
+                    """ # The trimming and shuffling was done in append_cluster() to prevent images from accumulating in memory
+                    # Shuffle before trimming to mix old and new samples
+                    if index < len(self.face_images_cluster) and len(self.face_embeddings_cluster[index])==len(self.face_images_cluster[index]):
+                        #self.face_embeddings_cluster[index], self.face_images_cluster[index] = shuffle(self.face_embeddings_cluster[index], self.face_images_cluster[index])
+                        while len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 2: # Maximum of samples for a face
+                            self.face_embeddings_cluster[index].pop(0)
+                            self.face_images_cluster[index].pop(0)
+                    else:
+                        self.face_embeddings_cluster[index] = shuffle(self.face_embeddings_cluster[index])
+                        while len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 2: # Maximum of samples for a face
+                            self.face_embeddings_cluster[index].pop(0)
+                    """
 
-                self.face_names_cluster[index][1] = len(self.face_embeddings_cluster[index])
+                    self.face_names_cluster[index][1] = len(self.face_embeddings_cluster[index])
 
-            for index, cluster in enumerate(self.face_embeddings_cluster):
-                # Flatten cluster so it can be fed to scipy.spatial.KDTree()
-                for emb in cluster:
-                    emb_flatten.append(emb)
+                for index, cluster in enumerate(self.face_embeddings_cluster):
+                    # Flatten cluster so it can be fed to scipy.spatial.KDTree()
+                    for emb in cluster:
+                        emb_flatten.append(emb)
 
-            self.face_tree_cluster = scipy.spatial.KDTree(np.array(emb_flatten).reshape(-1, 128))
-            FaceApplications().tree_updated(self.agent_id, self.face_tree_cluster, self.face_names_cluster)
-            self.is_tree_outsync = True
-            if self.t_save_face_tree==0: self.t_save_face_tree = time.time() + INTERVAL_FACE_SAVE
+                self.face_tree_cluster = scipy.spatial.KDTree(np.array(emb_flatten).reshape(-1, 128))
+                FaceApplications().tree_updated(self.agent_id, self.face_tree_cluster, self.face_names_cluster)
+                self.is_tree_outsync = True
+                if self.t_save_face_tree==0: self.t_save_face_tree = time.time() + INTERVAL_FACE_SAVE
 
-        self.is_tree_dirty = False
+            self.is_tree_dirty = False
 
-        if self.is_tree_outsync:
-            t_now = time.time()
-            debug('Check saving embeddings to file... {}'.format(t_now-self.t_save_face_tree))
-            if self.t_save_face_tree > 0 and t_now > self.t_save_face_tree:
-                print()
-                print()
-                print(threading.current_thread(), 'Saving embeddings to file...', len(self.face_images_cluster))
-                debug('Saving embeddings to file... {}'.format(len(self.face_images_cluster)))
-                # Save registered faces as files
-                # This is for debugging and has significant impact on performance
-                for index, images in enumerate(self.face_images_cluster):
-                    name, count = self.face_names_cluster[index]
-                    dir = '../models/face_registered/' + name
-                    if not os.path.isdir(dir):
-                        os.makedirs(dir)
-                    debug('images, name: {}, images: {}'.format(name, len(images)))
-                    for f_seq, f_img in enumerate(images):
-                        #img = (np.array(f_img)*255).astype(dtype=np.uint8)
-                        debug('f_img {}'.format(np.array(f_img).shape))
-                        img = cv2.cvtColor(f_img, cv2.COLOR_RGB2BGR)
-                        cv2.imwrite(dir+'/'+str(f_seq).zfill(4)+'.jpg', img)
+            if self.is_tree_outsync:
+                t_now = time.time()
+                debug('Check saving embeddings to file... {}'.format(t_now-self.t_save_face_tree))
+                if self.t_save_face_tree > 0 and t_now > self.t_save_face_tree:
+                    print()
+                    print()
+                    print(threading.current_thread(), 'Saving embeddings to file...', len(self.face_images_cluster))
+                    debug('Saving embeddings to file... {}'.format(len(self.face_images_cluster)))
+                    # Save registered faces as files
+                    # This is for debugging and has significant impact on performance
+                    for index, images in enumerate(self.face_images_cluster):
+                        name, count = self.face_names_cluster[index]
+                        dir = '../models/face_registered/' + name
+                        if not os.path.isdir(dir):
+                            os.makedirs(dir)
+                        debug('images, name: {}, images: {}'.format(name, len(images)))
+                        for f_seq, f_img in enumerate(images):
+                            #img = (np.array(f_img)*255).astype(dtype=np.uint8)
+                            f_img = np.array(f_img, dtype=np.uint8)
+                            img = cv2.cvtColor(f_img, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(dir+'/'+str(f_seq).zfill(4)+'.jpg', img)
 
-                json_obj = {
-                    'embeddings': self.face_embeddings_cluster,
-                    'names': self.face_names_cluster,
-                    #'images': self.face_images_cluster,
-                    'names_to_index': self.names_to_index,
-                }
-                with open(FACE_RECOGNITION_SAVE, 'w') as fw:
-                    fw.write(json.dumps(json_obj, cls=NumpyEncoder))
+                    json_obj = {
+                        'embeddings': self.face_embeddings_cluster,
+                        'names': self.face_names_cluster,
+                        #'images': self.face_images_cluster,
+                        'names_to_index': self.names_to_index,
+                    }
+                    with open(FACE_RECOGNITION_SAVE, 'w') as fw:
+                        fw.write(json.dumps(json_obj, cls=NumpyEncoder))
 
-                self.t_save_face_tree = 0
-                self.is_tree_outsync = False
+                    self.t_save_face_tree = 0
+                    self.is_tree_outsync = False
+        except:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            error('\n'.join(['Thread Exception: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
 
     def restore_embeddings(self):
         # Load face embeddings from disk and update search tree
@@ -812,6 +816,7 @@ class FaceApplications(VisionMainThread):
     """ This is for backward compatibility and the interface MUST NOT be changed. """
     def __init__(self):
         # Tensorflow sessions are thread-safe and can be called from multple threads simultaneously
+        # Call tf.Graph::finalize() to lock graphs
         self.__mtcnn = None
         self.__emoc = None
         self.__facenet = None
