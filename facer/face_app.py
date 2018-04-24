@@ -29,11 +29,11 @@ import traceback
 FACE_EMBEDDING_THRESHOLD_HIGH = 0.5375 # High precision 99%
 FACE_EMBEDDING_THRESHOLD_RECALL = 0.584375 # High recall 96%
 FACE_EMBEDDING_THRESHOLD_LOW = 0.378125 # Very high precision 99.866777%
-FACE_EMBEDDING_SAMPLE_SIZE = 8
+FACE_EMBEDDING_SAMPLE_SIZE = 6
 FACE_RECOGNITION_CONCURRENT = 1
 FACE_RECOGNITION_REMEMBER = 16
 FACE_RECOGNITION_SAVE = '../models/face_registered/embeddings.json'
-INTERVAL_FACE_TREE = 3.
+INTERVAL_FACE_REGISTER = 2.
 INTERVAL_FACE_SAVE = 180.
 INTERVAL_FACE_IMAGES_SAVE = 180.
 RUN_MODE_DEBUG = True
@@ -117,8 +117,9 @@ class FaceEmbeddingAgent():
     new faces to database, and create KD tree of the faces to be searched.
     """
 
-    def __init__(self, agent_id):
+    def __init__(self, agent_id, thread):
         self.agent_id = agent_id
+        self.thread = thread
         self.t_last_frame = 0
         self.is_registering = False
 
@@ -165,7 +166,7 @@ class FaceEmbeddingAgent():
 
     def register_new_cluster(self, cluster, images):
         # A new face is found
-        print('register_new_cluster', np.array(cluster).shape)
+        debug('register_new_cluster, shape: {}'.format(np.array(cluster).shape))
         name = str(uuid.uuid4()) # Assign a random new name
         self.names_to_index[name] = len(self.face_embeddings_cluster)
         self.face_embeddings_cluster.append(cluster)
@@ -213,6 +214,7 @@ class FaceEmbeddingAgent():
                     for emb in cluster:
                         emb_flatten.append(emb)
 
+                debug('Tree updated, identities: '.format(self.face_names_cluster))
                 self.face_tree_cluster = scipy.spatial.KDTree(np.array(emb_flatten).reshape(-1, 128))
                 FaceApplications().tree_updated(self.agent_id, self.face_tree_cluster, self.face_names_cluster)
                 self.is_tree_outsync = True
@@ -254,8 +256,9 @@ class FaceEmbeddingAgent():
                     self.t_save_face_tree = 0
                     self.is_tree_outsync = False
         except:
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            error('\n'.join(['Thread Exception: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
+            self.thread._on_crash()
+            #exc_type, exc_value, exc_traceback = sys.exc_info()
+            #error('\n'.join(['Thread Exception: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
 
     def restore_embeddings(self):
         # Load face embeddings from disk and update search tree
@@ -308,12 +311,12 @@ class FaceEmbeddingThread(ThreadBase):
                 #print('get embedding', t_now-task.t_expiration)
 
                 if t_now > task.t_expiration or task.embeddings is None:
-                    warn('Skip outdated embedding, delay: {}'.format((t_now-task.t_expiration)*1000))
+                    warning('Skip outdated embedding, delay: {}'.format((t_now-task.t_expiration)*1000))
                     pass
                 else:
                     agent_id = task.embeddings['agent']['agentId']
                     if agent_id not in self.agents:
-                        self.agents[agent_id] = FaceEmbeddingAgent(agent_id)
+                        self.agents[agent_id] = FaceEmbeddingAgent(agent_id, self)
                         self.agents[agent_id].restore_embeddings()
                     agent = self.agents[agent_id]
 
@@ -353,7 +356,7 @@ class FaceEmbeddingThread(ThreadBase):
 
                     if not is_registering:
                         if agent.t_update_face_tree==0:
-                            agent.t_update_face_tree = t_now + INTERVAL_FACE_TREE * 4 # Querying mode updates tree less frequently
+                            agent.t_update_face_tree = t_now + INTERVAL_FACE_REGISTER * 4 # Querying mode updates tree less frequently
                         elif t_now > agent.t_update_face_tree:
                             agent.check_update_tree()
                             agent.t_update_face_tree = 0
@@ -367,8 +370,10 @@ class FaceEmbeddingThread(ThreadBase):
 
                         #print(threading.current_thread(), 'CHECK UPDATE FACE TREE', t_now-self.t_update_face_tree)
                         # Update KD Tree only every X seconds
+                        debug('Check registering faces, time_delta: {}'.format(t_now-agent.t_update_face_tree))
                         if agent.t_update_face_tree==0:
-                            agent.t_update_face_tree = t_now + INTERVAL_FACE_TREE
+                            agent.t_update_face_tree = t_now + INTERVAL_FACE_REGISTER
+                            debug('Signal faces registering')
                         elif t_now > agent.t_update_face_tree:
                             #print(threading.current_thread(), 'update face tree', len(candidate['embeddings']))
 
@@ -378,7 +383,7 @@ class FaceEmbeddingThread(ThreadBase):
                             # Use IOU instead to group candidates
                             #self.face_tree_register = scipy.spatial.KDTree(register['embeddings'])
                             #clusters = self.face_tree_register.query_ball_tree(self.face_tree_register, FACE_EMBEDDING_THRESHOLD_LOW)
-                            clusters = imutil.group_rectangles_miniou(candidate['rectangles'])
+                            clusters = imutil.group_rectangles_miniou(candidate['rectangles'], threshold=0.3)
                             if clusters is not None:
                                 #print(clusters)
                                 # Sorting does nothing right now; all clusters are processed, independently
@@ -427,7 +432,7 @@ class FaceEmbeddingThread(ThreadBase):
                                                 d_mean = np.mean(d)
                                                 if d_mean < FACE_EMBEDDING_THRESHOLD_LOW:
                                                     # The face is already registered
-                                                    print('face already registered', d_mean, d)
+                                                    debug('Face already registered, d_mean: {}, d: {}'.format(d_mean, d))
                                                     pass
                                                 else:
                                                     # A new face is found
@@ -522,6 +527,7 @@ class FaceDetectionThread(ThreadBase):
         predictions = {
             'rectangles': [],
             'confidences': [],
+            'sort_index': [],
             'landmarks': [],
             'emotions': [],
             'recognition': {
@@ -699,8 +705,13 @@ class FaceDetectionThread(ThreadBase):
                     aligned_face_list[i, :, :, :] = aligned
                     #print('aligned', aligned.shape)
                 
-                sorting_index[i] = e[4] * r_[2] * r_[3]
+                if e[0] <= 0 or e[1] <= 0 or e[2] >= img.shape[1]-1 or e[3] >= img.shape[0]-1:
+                    sorting_index[i] = 0
+                else:
+                    sorting_index[i] = e[4] * r_[2] * r_[3]
             
+            predictions['sort_index'] = sorting_index
+
             # Sort faces by sorting_index and select first N faces for computation intensive operations, e.g., facenet embedding extraction
             better_faces = sorted(sorting_index, key=sorting_index.get, reverse=True)
             better_faces = better_faces[0:FACE_RECOGNITION_CONCURRENT]
