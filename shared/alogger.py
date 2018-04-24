@@ -1,13 +1,13 @@
 import logging, sys, traceback
 
 LOG_DIRECTORY = '../log/'
-formatter = logging.Formatter('[%(asctime)s] %(levelname)s (%(process)d) %(module)s: %(message)s')
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s (%(process)d) %(module)s %(lineno)d: %(message)s')
 
 sh = logging.StreamHandler(sys.stdout)
 sh.setLevel(logging.DEBUG)
 sh.setFormatter(formatter)
 
-fh = logging.handlers.RotatingFileHandler(LOG_DIRECTORY + 'rbtimg.log', maxBytes=16*1024*1024, backupCount=64)
+fh = logging.handlers.RotatingFileHandler(LOG_DIRECTORY + 'rbtimg.log', maxBytes=32*1024*1024, backupCount=16)
 fh.setLevel(logging.DEBUG)
 fh.setFormatter(formatter)
 
@@ -18,7 +18,7 @@ logger.addHandler(sh)
 logger.addHandler(fh)
 
 def my_handler(type, value, tb):
-    logger.error('\n'.join(['Uncaught Exception'] + list(traceback.format_tb(tb, limit=32)) + [type.__name__+':'+str(value)]))
+    logger.error('\n'.join(['Uncaught Exception'] + list(traceback.format_tb(tb, limit=32)) + [type.__name__+': '+str(value),]))
 
 # Install exception handler
 sys.excepthook = my_handler

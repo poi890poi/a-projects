@@ -219,6 +219,7 @@ class PredictHandler(tornado.web.RequestHandler):
             except ValueError:
                 self.set_status(400)
                 self.finish('Unable to decode as UTF-8')
+                debug('Unable to decode as UTF-8 {}'.format(postdata))
                 return
 
             try:
@@ -226,7 +227,22 @@ class PredictHandler(tornado.web.RequestHandler):
             except ValueError:
                 self.set_status(400)
                 self.finish('Unable to parse JSON')
+                debug('Unable to parse JSON {}'.format(postdata))
                 return
+
+            try:
+                if 'agent' in json_data and 'debug' in json_data['agent'] and json_data['agent']['debug']:
+                    original_request = dict(json_data)
+                    for request in original_request['requests']:
+                        if 'media' in request:
+                            request['media'] = len(request['media'])
+                        else:
+                            request['media'] = 'DEBUG_EMPTY'
+                    json_str_debug = json.dumps(original_request, cls=NumpyEncoder)
+                    debug('Detection request ' + json_str_debug)
+            except:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                warn('\n'.join(['Bad Request: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
 
             if 'timing' in json_data:
                 json_data['timing']['server_rcv'] = time.time() * 1000
@@ -275,6 +291,7 @@ class PredictHandler(tornado.web.RequestHandler):
                     if img is None:
                         self.set_status(400)
                         self.finish("Unable to load media for request " + request['requestId'])
+                        debug('Unable to load media {}'.format(request['media']))
                         return
                     service_timing['decode_img'] = (time.time() - t_) * 1000
                     
@@ -335,8 +352,6 @@ class PredictHandler(tornado.web.RequestHandler):
         json_data.pop('requests', None)
 
         json_str = json.dumps(json_data, cls=NumpyEncoder)
-        if 'agent' in json_data and 'debug' in json_data['agent'] and json_data['agent']['debug']:
-            debug('Detection request ' + json_str)
 
         self.write(json_str)
         self.finish()
