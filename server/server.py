@@ -13,6 +13,10 @@ import base64
 import cv2
 import numpy as np
 
+import sys
+import threading
+import copy
+
 from facer.predict import FaceClassifier
 from facer.face_app import FaceApplications, DetectionTask
 
@@ -206,6 +210,7 @@ class PredictHandler(tornado.web.RequestHandler):
 
     def post(self):
         #self.get_argument('username')
+        t_now = time.time() * 1000
         info('POST request from: ' + self.request.remote_ip)
 
         try:
@@ -232,113 +237,123 @@ class PredictHandler(tornado.web.RequestHandler):
 
             try:
                 if 'agent' in json_data and 'debug' in json_data['agent'] and json_data['agent']['debug']:
-                    original_request = dict(json_data)
+                    original_request = copy.deepcopy(json_data)
                     for request in original_request['requests']:
-                        if 'media' in request:
-                            request['media'] = len(request['media'])
+                        if 'media' in request and 'content' in request['media']:
+                            request['media']['content_length'] = len(request['media']['content'])
+                            request['media'].pop('content', None)
                         else:
                             request['media'] = 'DEBUG_EMPTY'
                     json_str_debug = json.dumps(original_request, cls=NumpyEncoder)
                     debug('Detection request ' + json_str_debug)
+
+                if 'timing' in json_data:
+                    json_data['timing']['server_rcv'] = time.time() * 1000
+
+                """
+                - One or multiple predict request could be included in single HTTP POST
+                - Each predict request has only one 'media', which contains an image
+                - Each predict request requests one or multiple services
+                - For each service, 'type' and 'model' must be specified
+                - For each service type, options are type dependent
+                """
+                if 'requests' not in json_data:
+                    self.set_status(400)
+                    self.finish("Requests must be enclosed in 'requests' attribute as a list of request")
+                    return
+                for request in json_data['requests']:
+                    if 'services' not in request:
+                        self.set_status(400)
+                        self.finish("Services must be enclosed in 'services' attribute for request " + request['requestId'])
+                        return
+
+                    img = None
+
+                    for service in request['services']:
+                        #print(service)
+                        service_timing = {}
+
+                        if 'media' not in request:
+                            self.set_status(400)
+                            self.finish('Media is empty for request ' + request['requestId'])
+                            return
+                        if 'content' in request['media']:
+                            # Hard-cap length of media/contant at 2MB to save server resource
+                            if len(request['media']['content']) > 2*1024*1024:
+                                self.set_status(400)
+                                self.finish('Content of media too large for request ' + request['requestId'])
+                                return
+
+                        if 'type' not in service:
+                            self.set_status(400)
+                            self.finish("'type' attribute of a service must be specified for request " + request['requestId'])
+                            return
+
+                        t_ = time.time()
+                        if img is None: img = self.__format_image(request['media'])
+                        if img is None:
+                            self.set_status(400)
+                            self.finish("Unable to load media for request " + request['requestId'])
+                            debug('Unable to load media {}'.format(request['media']))
+                            return
+                        service_timing['decode_img'] = (time.time() - t_) * 1000
+                        
+                        if service['type']=='_void':
+                            # For validating and benchmarking network connection
+                            service['results'] = {
+                                'timing': service_timing,
+                            }
+                        elif service['type']=='face':
+                            face_app = FaceApplications()
+                            params = {
+                                'service': service,
+                                'output_holder': self.out_queue,
+                                'agent': json_data['agent']
+                            }
+                            if face_app.detect(img, params=params):
+                                # Call get() to block and wait for detection result
+                                t_ = time.time()
+                                output = self.out_queue.get() # This is blocked until something is put in the queue
+                                #print('.get() latency', (time.time() - t_) * 1000)
+                            else:
+                                # Detection threadings are busy
+                                warning('Server is busy')
+                                self.set_status(503)
+                                return
+
+                            if output is None: # Detection thread skips this frame
+                                warning('Server is busy')
+                                self.set_status(503)
+                                return
+
+                            service['results'] = output['predictions']
+                            if 'options' in service: service.pop('options', None)
+                            self.out_queue.task_done()
+                            #print('service', service)
+                        elif service['type']=='face_':
+                            # This is for testing before 201803
+                            classifier = FaceClassifier()
+                            classifier.init()
+                            rects, predictions, timing, fdetect_result = classifier.detect(request['media'])
+                            i = 0
+                            for rect in rects:
+                                print(rect, predictions[i])
+                                i += 1
+                            service['results'] = {
+                                'rects': rects,
+                                'predictions': predictions,
+                                'mtcnn': fdetect_result['mtcnn'],
+                                'mtcnn_5p': fdetect_result['mtcnn_5p'],
+                                'emotions': fdetect_result['emotions'],
+                                'timing': timing,
+                            }
+                    request.pop('media', None)
+
             except:
                 exc_type, exc_value, exc_traceback = sys.exc_info()
-                warn('\n'.join(['Bad Request: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
-
-            if 'timing' in json_data:
-                json_data['timing']['server_rcv'] = time.time() * 1000
-
-            """
-            - One or multiple predict request could be included in single HTTP POST
-            - Each predict request has only one 'media', which contains an image
-            - Each predict request requests one or multiple services
-            - For each service, 'type' and 'model' must be specified
-            - For each service type, options are type dependent
-            """
-            if 'requests' not in json_data:
-                self.set_status(400)
-                self.finish("Requests must be enclosed in 'requests' attribute as a list of request")
+                error('\n'.join(['Bad Request: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
+                self.set_status(500)
                 return
-            for request in json_data['requests']:
-                if 'services' not in request:
-                    self.set_status(400)
-                    self.finish("Services must be enclosed in 'services' attribute for request " + request['requestId'])
-                    return
-
-                img = None
-
-                for service in request['services']:
-                    #print(service)
-                    service_timing = {}
-
-                    if 'media' not in request:
-                        self.set_status(400)
-                        self.finish('Media is empty for request ' + request['requestId'])
-                        return
-                    if 'content' in request['media']:
-                        # Hard-cap length of media/contant at 2MB to save server resource
-                        if len(request['media']['content']) > 2*1024*1024:
-                            self.set_status(400)
-                            self.finish('Content of media too large for request ' + request['requestId'])
-                            return
-
-                    if 'type' not in service:
-                        self.set_status(400)
-                        self.finish("'type' attribute of a service must be specified for request " + request['requestId'])
-                        return
-
-                    t_ = time.time()
-                    if img is None: img = self.__format_image(request['media'])
-                    if img is None:
-                        self.set_status(400)
-                        self.finish("Unable to load media for request " + request['requestId'])
-                        debug('Unable to load media {}'.format(request['media']))
-                        return
-                    service_timing['decode_img'] = (time.time() - t_) * 1000
-                    
-                    if service['type']=='_void':
-                        # For validating and benchmarking network connection
-                        service['results'] = {
-                            'timing': service_timing,
-                        }
-                    elif service['type']=='face':
-                        face_app = FaceApplications()
-                        params = {
-                            'service': service,
-                            'output_holder': self.out_queue,
-                            'agent': json_data['agent']
-                        }
-                        if face_app.detect(img, params=params):
-                            # Call get() to block and wait for detection result
-                            t_ = time.time()
-                            output = self.out_queue.get()
-                            #print('.get() latency', (time.time() - t_) * 1000)
-                        else:
-                            # Detection threadings are busy
-                            warn('Server is busy')
-                            self.set_status(503)
-                            return
-                        service['results'] = output['predictions']
-                        if 'options' in service: service.pop('options', None)
-                        self.out_queue.task_done()
-                        #print('service', service)
-                    elif service['type']=='face_':
-                        # This is for testing before 201803
-                        classifier = FaceClassifier()
-                        classifier.init()
-                        rects, predictions, timing, fdetect_result = classifier.detect(request['media'])
-                        i = 0
-                        for rect in rects:
-                            print(rect, predictions[i])
-                            i += 1
-                        service['results'] = {
-                            'rects': rects,
-                            'predictions': predictions,
-                            'mtcnn': fdetect_result['mtcnn'],
-                            'mtcnn_5p': fdetect_result['mtcnn_5p'],
-                            'emotions': fdetect_result['emotions'],
-                            'timing': timing,
-                        }
-                request.pop('media', None)
     
             #print('json decoded', json_data)
 
@@ -352,6 +367,8 @@ class PredictHandler(tornado.web.RequestHandler):
         json_data.pop('requests', None)
 
         json_str = json.dumps(json_data, cls=NumpyEncoder)
+
+        info('Response, latency: {}'.format(time.time()*1000-t_now))
 
         self.write(json_str)
         self.finish()

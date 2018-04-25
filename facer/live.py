@@ -15,8 +15,8 @@ import argparse
 from queue import Queue, Empty
 import threading
 
-in_queue = Queue()
-out_queue = Queue()
+in_queue = Queue(maxsize=1)
+out_queue = Queue(maxsize=8)
 
 class ThreadUrl(threading.Thread):
     """Threaded Url Grab"""
@@ -28,33 +28,36 @@ class ThreadUrl(threading.Thread):
     def run(self):
         http = urllib3.PoolManager()
         while True:
-            #grabs data from queue
+            t_now = time.time() * 1000
+
+            # Grabs data from queue
             task = self.in_queue.get()
 
-            if time.time() > task['timing']['t_expiration']:
+            if t_now > task['timing']['t_expiration']:
                 # Task waiting for too long in the queue; discard it.
                 #print('skip frame')
                 pass
 
             else:
-                delay = time.time()*1000 - task['agent']['t_frame']
+                delay = t_now - task['agent']['t_frame']
                 print('frame to http request', delay, task['requests'][0]['services'][0]['mode'])
 
                 postdata = json.dumps(task)
                 try:
                     #self.response = None
-                    #url = 'http://192.168.41.41:9000/predict'
-                    url = 'http://10.129.11.4:9000/predict'
+                    url = 'http://192.168.41.41:9000/predict'
+                    #url = 'http://10.129.11.4:9000/predict'
                     r = http.request('POST', url, body=postdata.encode())
                     response = json.loads(r.data.decode())
                     timing = response['timing']
                     server_time = timing['server_sent'] - timing['server_rcv']
-                    total_time = (time.time() - timing['client_sent']) * 1000
+                    total_time = t_now - timing['client_sent']
                     client_time = total_time - server_time
                     #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
                     response['agent'] = task['agent']
-                    self.out_queue.put(response)
-                    print('frame to http response', time.time()*1000 - task['agent']['t_frame'])
+                    if not self.out_queue.full():
+                        self.out_queue.put_nowait(response)
+                    print('frame to http response', t_now - task['agent']['t_frame'])
                     #print('response time:', total_time)
                     print()
                 except URLError:
@@ -197,19 +200,19 @@ def main(args):
                 'agent': {
                     'agentId': '192.168.41.41',
                     't_frame': t_frame,
-                    'debug': 1,
+                    #'debug': 1,
                 },
                 'timing': {
-                    'client_sent': time.time(),
-                    't_expiration': time.time() + 0.25,
+                    'client_sent': time.time() * 1000,
+                    't_expiration': (time.time() + 0.25) * 1000,
                 }
             }
 
-            if in_queue.qsize() >= 1:
+            if in_queue.full():
                 # in_queue is full
                 pass
             else:
-                in_queue.put(requests)
+                in_queue.put_nowait(requests)
                 #print('qsize', in_queue.qsize())
 
             f_ = 0
@@ -217,7 +220,12 @@ def main(args):
 
         try:
             last_response = out_queue.get_nowait()
-            print('frame to get_nowait()', time.time()*1000 - last_response['agent']['t_frame'])
+            t_now = time.time() * 1000
+            latency = t_now - last_response['agent']['t_frame']
+            if latency > 800:
+                # Result out-dated
+                last_response = None
+            print('frame to display()', latency)
         except Empty:
             pass
 
@@ -235,14 +243,14 @@ def main(args):
                             if name in name_table: name = name_table[name]
                             if not name: name = 'UNKNOWN'
                             confidence = identity['confidence'][i]
-                            if confidence >= 0.3:
+                            if confidence > 0.:
                                 confidence = str(round(confidence, 2))
                                 tag = '{} / {}'.format(name, confidence)
                                 cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 255, 0), 1, cv2.LINE_AA)
-                            else:
+                            """else:
                                 s_index = str(round(service['results']['sort_index'][str(i)], 2))
                                 tag = '{}'.format(s_index)
-                                cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 255, 0), 1, cv2.LINE_AA)
+                                cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 255, 0), 1, cv2.LINE_AA)"""
 
         pos = cap.get(cv2.CAP_PROP_POS_MSEC)
         pos_str = time_string(pos)
