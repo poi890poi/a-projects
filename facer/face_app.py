@@ -22,27 +22,32 @@ import uuid
 import json
 import random
 import copy
+import base64
 
 from queue import Queue, Empty
 import threading
 import traceback
 
 FACE_EMBEDDING_THRESHOLD_HIGH = 0.5375 # High precision 99%
-FACE_EMBEDDING_THRESHOLD_RECALL = 0.584375 # High recall 96%
-FACE_EMBEDDING_THRESHOLD_LOW = 0.378125 # Very high precision 99.866777%
+FACE_EMBEDDING_THRESHOLD_RECALL = 0.584375 # High recall 96%. This is used for querying to optimize recall
+FACE_EMBEDDING_THRESHOLD_LOW = 0.378125 # Very high precision 99.866777%. This is used for finding existing identity during registering new faces
+
+# The number of face samples required for registration of an identity
+# (additional FACE_EMBEDDING_SAMPLE_SIZE will be added later for increase accuracy and keeps record up to date)
 FACE_EMBEDDING_SAMPLE_SIZE = 6
+
 FACE_RECOGNITION_CONCURRENT = 1
-FACE_RECOGNITION_REMEMBER = 16
-FACE_RECOGNITION_SAVE = '../models/face_registered/{}/embeddings.json'
-INTERVAL_FACE_REGISTER = 2.
-INTERVAL_FACE_SAVE = 180.
-INTERVAL_FACE_IMAGES_SAVE = 180.
+FACE_RECOGNITION_REMEMBER = 32
+FACE_RECOGNITION_DIR = '../models/face_registered'
+INTERVAL_TASK_EXPIRATION = 500. # Task expiration time before being processed by a thread
+INTERVAL_FACE_REGISTER = 2000.
+INTERVAL_FACE_SAVE = 300. * 1000
 RUN_MODE_DEBUG = True
 
 # Lazy mechanism use results of previous detection if time difference
 # of consecutive frame is within the constants defined here (in seconds)
-LAZY_DETECTION = 0.2
-LAZY_RECOGNITION = 2.
+LAZY_DETECTION = 125.
+LAZY_RECOGNITION = 2000.
 
 """
 - Array plane is (custom) defined as coordinate system of y (row) before x (col),
@@ -87,10 +92,13 @@ class DetectionTask():
         self.img = img
         self.params = params
         self.t_queued = time.time() * 1000
-        self.t_expiration = time.time() + 0.5
+        self.t_expiration = self.t_queued + INTERVAL_TASK_EXPIRATION
         
         # For sending embeddings from detection thread to embedding thread
         self.embeddings = None
+
+        # For sending data to be saved to LocalDiskIOThread
+        self.write = None
 
 class ThreadBase(threading.Thread):
     """
@@ -117,6 +125,30 @@ class ThreadBase(threading.Thread):
     def run(self):
         raise NotImplementedError('VisionCore::run() must be implemented in derived class')
 
+        # This is a template. Every thread must implement run() and modify this based on their jobs.
+        while True:
+            if self.is_crashed:
+                # The thread is broken; do nothing...
+                # or restart the thread in main thread, if its job is so important.
+                time.sleep(1)
+                continue
+    
+            if not self.is_standby:
+                # Do initialization here...
+                self.is_standby = True
+                continue
+
+            try:
+                t_now = time.time() * 1000 # Timing is essential for threading. It's a good practice to keep track of processing time for each thread.
+                task = self.in_queue.get() # queue::get() is blocking by default
+
+                # Do its job...
+
+                self.in_queue.task_done() # Must be called or the queue will be fulled eventually
+            except:
+                self._on_crash()
+
+
 class FaceEmbeddingAgent():
     """
     FaceEmbeddingAgent is an agent-specific object that stores required data for face embedding registering,
@@ -126,6 +158,16 @@ class FaceEmbeddingAgent():
 
     def __init__(self, agent_id, thread):
         self.agent_id = agent_id
+        
+        # Prepare directory
+        self.safe_id = base64.urlsafe_b64encode(self.agent_id.encode()).decode()
+        if not os.path.isdir(FACE_RECOGNITION_DIR):
+            pathlib.Path(FACE_RECOGNITION_DIR).mkdir(parents=True, exist_ok=True)
+        self.dir_embeddings = FACE_RECOGNITION_DIR + '/' + self.safe_id
+        if not os.path.isdir(self.dir_embeddings):
+            pathlib.Path(self.dir_embeddings).mkdir(parents=True, exist_ok=True)
+        self.fn_embeddings = self.dir_embeddings + '/embeddings.json'
+
         self.thread = thread
         self.t_last_frame = 0
         self.is_registering = False
@@ -173,13 +215,13 @@ class FaceEmbeddingAgent():
 
     def register_new_cluster(self, cluster, images):
         # A new face is found
-        debug('register_new_cluster, shape: {}'.format(np.array(cluster).shape))
+        info('register_new_cluster, shape: {}'.format(np.array(cluster).shape))
         name = str(uuid.uuid4()) # Assign a random new name
         self.names_to_index[name] = len(self.face_embeddings_cluster)
         self.face_embeddings_cluster.append(cluster)
         self.face_names_cluster.append([name, len(cluster)])
         if RUN_MODE_DEBUG:
-            self.face_images_cluster.append((np.array(images)*255).astype(dtype=np.uint8))
+            self.face_images_cluster.append((np.array(images)*255).astype(dtype=np.uint8).tolist())
         
         while len(self.face_embeddings_cluster) > FACE_RECOGNITION_REMEMBER: # Maximum of faces to remember
             name = self.face_names_cluster.pop(0)
@@ -193,7 +235,9 @@ class FaceEmbeddingAgent():
     def check_update_tree(self):
         #print('check_update_tree', self.is_tree_dirty)
         try:
+            t_now = time.time() * 1000
             if self.is_tree_dirty:
+
                 print('check_update_tree', len(self.face_embeddings_cluster), len(self.face_images_cluster))
                 # Flatten the list of lists with varying length
                 emb_flatten = []
@@ -225,12 +269,11 @@ class FaceEmbeddingAgent():
                 self.face_tree_cluster = scipy.spatial.KDTree(np.array(emb_flatten).reshape(-1, 128))
                 FaceApplications().tree_updated(self.agent_id, self.face_tree_cluster, self.face_names_cluster)
                 self.is_tree_outsync = True
-                if self.t_save_face_tree==0: self.t_save_face_tree = time.time() + INTERVAL_FACE_SAVE
+                if self.t_save_face_tree==0: self.t_save_face_tree = t_now + INTERVAL_FACE_SAVE
 
             self.is_tree_dirty = False
 
             if self.is_tree_outsync:
-                t_now = time.time()
                 debug('Check saving embeddings to file... {}'.format(t_now-self.t_save_face_tree))
                 if self.t_save_face_tree > 0 and t_now > self.t_save_face_tree:
                     print()
@@ -241,7 +284,7 @@ class FaceEmbeddingAgent():
                     # This is for debugging and has significant impact on performance
                     for index, images in enumerate(self.face_images_cluster):
                         name, count = self.face_names_cluster[index]
-                        dir = '../models/face_registered/' + self.agent_id + '/' + name
+                        dir = self.dir_embeddings + name
                         if not os.path.isdir(dir):
                             os.makedirs(dir)
                         debug('images, name: {}, images: {}'.format(name, len(images)))
@@ -257,7 +300,7 @@ class FaceEmbeddingAgent():
                         #'images': self.face_images_cluster,
                         'names_to_index': self.names_to_index,
                     }
-                    with open(FACE_RECOGNITION_SAVE.format((self.agent_id)), 'w') as fw:
+                    with open(self.fn_embeddings, 'w') as fw:
                         fw.write(json.dumps(json_obj, cls=NumpyEncoder))
 
                     self.t_save_face_tree = 0
@@ -271,7 +314,7 @@ class FaceEmbeddingAgent():
         # Load face embeddings from disk and update search tree
         print(threading.current_thread(), 'Restoring embeddings from file...')
         try:
-            with open(FACE_RECOGNITION_SAVE.format((self.agent_id)), 'r') as fr:
+            with open(self.fn_embeddings, 'r') as fr:
                 json_obj = json.loads(fr.read())
             self.face_embeddings_cluster = json_obj['embeddings']
             self.face_names_cluster = json_obj['names']
@@ -284,6 +327,33 @@ class FaceEmbeddingAgent():
         except FileNotFoundError:
             pass
         print(threading.current_thread(), 'Embeddings restored.')
+
+class LocalDiskIOThread(ThreadBase):
+    def _init_derived(self):
+        pass
+
+    def run(self):
+        while True:
+            if self.is_crashed:
+                # The thread is broken; do nothing...
+                # or restart the thread in main thread, if its job is so important.
+                time.sleep(1)
+                continue
+    
+            if not self.is_standby:
+                # Do initialization here...
+                self.is_standby = True
+                continue
+
+            try:
+                t_now = time.time() * 1000 # Timing is essential for threading. It's a good practice to keep track of processing time for each thread.
+                task = self.in_queue.get() # queue::get() is blocking by default
+
+                # Do its job...
+
+                self.in_queue.task_done() # Must be called or the queue will be fulled eventually
+            except:
+                self._on_crash()
 
 class FaceEmbeddingThread(ThreadBase):
     """
@@ -311,14 +381,14 @@ class FaceEmbeddingThread(ThreadBase):
                 continue
             
             try:
-                t_now = time.time()
+                t_now = time.time() * 1000
 
                 # Get new face embeddings and update KDTree
                 task = self.in_queue.get() # queue::get() is blocking by default
                 #print('get embedding', t_now-task.t_expiration)
 
                 if t_now > task.t_expiration:
-                    warning('Skip outdated embedding, delay: {}, embeddings: {}'.format((t_now-task.t_expiration)*1000, (task.embeddings is not None)))
+                    warning('Skip outdated embedding, delay: {}, embeddings: {}'.format(t_now-task.t_expiration, (task.embeddings is not None)))
                     pass
                     
                 elif task.embeddings:
@@ -343,6 +413,7 @@ class FaceEmbeddingThread(ThreadBase):
 
                     if is_registering:
                         if not agent.is_registering:
+                            info('Engage registering... {}'.format(agent.safe_id))
                             # Reset candidates when engaging a new session of registering, to prevent mixing faces of different identities
                             candidate['embeddings'] = []
                             candidate['face_images'] = []
@@ -363,6 +434,7 @@ class FaceEmbeddingThread(ThreadBase):
                                 candidate['rectangles'].append(rectangles[emb_i])
 
                     if not is_registering:
+                        # Update appended samples of existing identity to keep the record up to date
                         if agent.t_update_face_tree==0:
                             agent.t_update_face_tree = t_now + INTERVAL_FACE_REGISTER * 4 # Querying mode updates tree less frequently
                         elif t_now > agent.t_update_face_tree:
@@ -383,8 +455,7 @@ class FaceEmbeddingThread(ThreadBase):
                             agent.t_update_face_tree = t_now + INTERVAL_FACE_REGISTER
                             debug('Signal faces registering')
                         elif t_now > agent.t_update_face_tree:
-                            #print(threading.current_thread(), 'update face tree', len(candidate['embeddings']))
-
+                            debug('Check registering new identity... {}'.format(agent.safe_id))
                             # Group face embeddings into clusters
 
                             # 20180419 Lee noted: query_ball_tree() of scipy returns a lot of duplicated clusters and the result is also suboptimal
@@ -440,7 +511,7 @@ class FaceEmbeddingThread(ThreadBase):
                                                 d_mean = np.mean(d)
                                                 if d_mean < FACE_EMBEDDING_THRESHOLD_LOW:
                                                     # The face is already registered
-                                                    debug('Face already registered, d_mean: {}, d: {}'.format(d_mean, d))
+                                                    info('Face already registered, d_mean: {}, d: {}'.format(d_mean, d))
                                                     pass
                                                 else:
                                                     # A new face is found
@@ -484,7 +555,7 @@ class FaceDetectionThread(ThreadBase):
 
             try:
                 # Get task from input queue
-                t_now = time.time()
+                t_now = time.time() * 1000
 
                 task = self.in_queue.get() # queue::get() is blocking by default
 
@@ -503,15 +574,13 @@ class FaceDetectionThread(ThreadBase):
                     if agent_id in FaceApplications().agent_state:
                         agstate = FaceApplications().agent_state[agent_id]
                         t_detection = agstate['t_detection']
-                        if t_now*1000-t_detection < LAZY_DETECTION*1000:
+                        if t_now-t_detection < LAZY_DETECTION:
                             # Last detection results are still fresh and can be responded directly
                             use_last_predictions = True
                             predictions = copy.deepcopy(agstate['predictions'])
                             if 'identities' in predictions: predictions.pop('identities', None)
-                            debug('Use lazy detection, {}, {}'.format(t_now*1000-t_detection, LAZY_DETECTION))
-                        #if t_now*1000-t_recognition < LAZY_RECOGNITION*1000:
-                            # Last recognition results are still fresh and can be responded directly
-                        #debug('Check lazy detection, t_detection: {}, t_recognition: {}, interval_detection: {}, interval_recognition: {}'.format(t_now*1000-t_detection, t_now*1000-t_recognition, LAZY_DETECTION, LAZY_RECOGNITION))
+                            debug('Use lazy detection, {}, {}'.format(t_now-t_detection, LAZY_DETECTION))
+                            #debug('Check lazy detection, t_detection: {}, t_recognition: {}, interval_detection: {}, interval_recognition: {}'.format(t_now-t_detection, t_now-t_recognition, LAZY_DETECTION, LAZY_RECOGNITION))
 
                     if not use_last_predictions:
                         predictions = self.detect(task.img, task.params)
@@ -520,38 +589,47 @@ class FaceDetectionThread(ThreadBase):
                     use_last_recognition = False
                     if agstate is not None:
                         if 'identities' in agstate['predictions'] and len(predictions['rectangles']):
-                            t_recognition = agstate['t_recognition']
-                            #debug('Check lazy recognition, t_recognition: {}, interval_recognition: {}'.format(t_now*1000-t_recognition, LAZY_RECOGNITION))
-                            if t_now*1000-t_recognition < LAZY_RECOGNITION*1000:
-                                confidence_decay = (t_now*1000-t_recognition) / (LAZY_RECOGNITION*1000)
-                                len_frame_now = len(predictions['rectangles'])
-                                len_frame_last = len(agstate['predictions']['rectangles'])
-                                frame_id = []
-                                frame_id = frame_id + [0]*len_frame_now
-                                frame_id = frame_id + [1]*len_frame_last
-                                rectangles = predictions['rectangles'] + agstate['predictions']['rectangles']
-                                clusters = imutil.group_rectangles_miniou(rectangles, threshold=0.3)
-                                #debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
-                                name = [''] * len_frame_now
-                                confidence = [0.] * len_frame_now
-                                #debug('Initialize name and confidence {} {} {}'.format(len_frame_now, name, confidence))
-                                for pair in clusters:
-                                    if len(pair)==2: # Only one-one overlapping is considered same face
-                                        index_now = pair[0]
-                                        index_last = pair[1]
-                                        if frame_id[index_now]!=frame_id[index_last]: # Overlapped rectangles not in the same frame
-                                            index_last = pair[1] - len_frame_now
-                                            name[index_now] = agstate['predictions']['identities']['name'][index_last]
-                                            confidence[index_now] = agstate['predictions']['identities']['confidence'][index_last] * confidence_decay
-                                            if len(name[index_now]): use_last_recognition = True
-                                if use_last_recognition:
-                                    predictions['identities'] = {
-                                        'name': name,
-                                        'confidence': confidence,
-                                    }
-                                    if 'recognition' in predictions:
-                                        predictions.pop('recognition', None)
-                                    debug('Use lazy recognition, {}'.format(predictions['identities']))
+                            if 'service' in task.params and 'mode' in task.params['service'] and task.params['service']['mode']=='register':
+                                # Do not use lazy recognition mechanism when registering a face
+                                pass
+                            else:
+                                t_recognition = agstate['t_recognition']
+                                #debug('Check lazy recognition, t_recognition: {}, interval_recognition: {}'.format(t_now-t_recognition, LAZY_RECOGNITION))
+                                if t_now-t_recognition < LAZY_RECOGNITION: # Check if face recognition results are outdated
+                                    confidence_decay = (t_now-t_recognition) / (LAZY_RECOGNITION)
+                                    len_frame_now = len(predictions['rectangles'])
+                                    len_frame_last = len(agstate['predictions']['rectangles'])
+                                    frame_id = []
+                                    frame_id = frame_id + [0]*len_frame_now
+                                    frame_id = frame_id + [1]*len_frame_last
+                                    rectangles = predictions['rectangles'] + agstate['predictions']['rectangles']
+
+                                    # Calculate IOU of rectangles to determine if faces in 2 frames belong to a single identity
+                                    clusters = imutil.group_rectangles_miniou(rectangles, threshold=0.5)
+                                    #debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
+                                    name = [''] * len_frame_now
+                                    confidence = [0.] * len_frame_now
+                                    #debug('Initialize name and confidence {} {} {}'.format(len_frame_now, name, confidence))
+                                    for pair in clusters:
+                                        if len(pair)==2: # Only one-one overlapping is considered same face
+                                            index_now = pair[0]
+                                            index_last = pair[1]
+                                            if frame_id[index_now]!=frame_id[index_last]: # Overlapped rectangles not in the same frame
+                                                # Rectangles IOU overlapped
+                                                index_last = pair[1] - len_frame_now
+                                                name[index_now] = agstate['predictions']['identities']['name'][index_last]
+                                                confidence[index_now] = agstate['predictions']['identities']['confidence'][index_last] * confidence_decay
+                                                if len(name[index_now]): use_last_recognition = True
+
+                                    if use_last_recognition:
+                                        predictions['identities'] = {
+                                            'name': name,
+                                            'confidence': confidence,
+                                        }
+                                        if 'recognition' in predictions:
+                                            # Remove 'recognition' in predictions to skip face recognition computation
+                                            predictions.pop('recognition', None)
+                                        debug('Use lazy recognition, {}'.format(predictions['identities']))
                     
                     if 'recognition' in predictions and len(predictions['recognition']['rectangles']):
                         #print('embeddings', predictions['embeddings'])
@@ -580,9 +658,9 @@ class FaceDetectionThread(ThreadBase):
                         predictions.pop('recognition', None) # embeddings are not supposed to be returned to client
 
                     if not use_last_predictions and not use_last_recognition:
-                        FaceApplications().on_predictions(task.params['agent'], t_now*1000, predictions)
+                        FaceApplications().on_predictions(task.params['agent'], t_now, predictions)
 
-                    info('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000 - task.t_queued, threading.current_thread()))
+                    info('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000-task.t_queued, threading.current_thread()))
                     task.params['output_holder'].put_nowait({'predictions': predictions})
 
                 self.in_queue.task_done()
@@ -772,7 +850,7 @@ class FaceDetectionThread(ThreadBase):
                     facelist[i:i+1, :, :] = face
                     predictions['timing']['emoc_prepare'] += (time.time() - t_) * 1000
                 elif model=='fnet':
-                    aligned = FaceApplications.align_face(img, landmarks[i], intensity=1., sz=160, ortho=True, expand=1.5, scale_limit=2.)
+                    aligned = FaceApplications.align_face_fnet(img, landmarks[i])
                     aligned_face_list[i, :, :, :] = aligned
                     #print('aligned', aligned.shape)
                 
@@ -906,7 +984,7 @@ class FaceApplications(VisionMainThread):
         self.get_emotion_classifier_create()
         self.get_facenet_create()
 
-        self.agent_state = {}
+        self.agent_state = {} # Persistent states for agents
 
         self.core_threads = []
         self.in_queue = Queue(maxsize=8)
@@ -980,6 +1058,7 @@ class FaceApplications(VisionMainThread):
 
     def tree_updated(self, agent_id, tree, names_cluster):
         # Notified by FaceEmbeddingThread that search tree of known faces is updated
+        # This is called from multiple threads. Fortunately, Python dict is thread-safe
         self.face_tree[agent_id] = tree
         self.face_names_flatten[agent_id] = []
         info('Tree updated, agent: {}, faces: {}'.format(agent_id, len(names_cluster)))
@@ -988,16 +1067,15 @@ class FaceApplications(VisionMainThread):
                 self.face_names_flatten[agent_id].append(name)
 
     def query_embedding(self, agent_id, embeddings):
+        names = [''] * len(embeddings)
         confidences = np.zeros((len(embeddings),), dtype=np.float)
-        names = []
-        for _ in range(len(embeddings)):
-            names.append('')
-        #print('len of embeddings', len(embeddings), confidences)
 
         if agent_id in self.face_tree:
             embeddings = sklearn.preprocessing.normalize(embeddings)
             for i, emb in enumerate(embeddings):
                 distance, index = self.face_tree[agent_id].query(emb, FACE_EMBEDDING_SAMPLE_SIZE)
+
+                # Find most frequent matched name
                 name_freq = {}
                 name_freq_max = 0
                 #print('closet neighbors', index)
@@ -1011,6 +1089,8 @@ class FaceApplications(VisionMainThread):
                         name_freq_max = name_freq[name]
                         name_freq_name = name
                     #print('query_embedding, neighbor', name, distance[j])
+
+                # At least FACE_EMBEDDING_SAMPLE_SIZE/2 samples are required to consider a positive match
                 if name_freq_max*2 >= FACE_EMBEDDING_SAMPLE_SIZE:
                     d = []
                     for j, face_index in enumerate(index):
@@ -1027,7 +1107,7 @@ class FaceApplications(VisionMainThread):
     def detect(self, img, params):
         """ Queue the task """
         #print('detect', self.in_queue.qsize())
-        if self.in_queue.full(): # Maximal requests allowed
+        if self.in_queue.full():
             return False
         else:
             t = DetectionTask(img, params)
@@ -1035,17 +1115,7 @@ class FaceApplications(VisionMainThread):
             return True
 
     def on_predictions(self, agent, t_detection, predictions):
-        """p_task = DetectionTask(None, None)
-        p_task.agent_id = agent['agentId']
-        
-        p_task.t_detection = t_detection
-        p_task.predictions = predictions
-        if not self.emb_queue.full():
-            self.emb_queue.put(p_task)
-        else:
-            debug('emb_queue full')
-            pass"""
-
+        """ Save predictions in memory for lazy detection """
         agent_id = agent['agentId']
         if agent_id not in self.agent_state:
             self.agent_state[agent_id] = {
@@ -1063,6 +1133,11 @@ class FaceApplications(VisionMainThread):
         else:
             agstate['t_recognition'] = 0
             agstate['predictions'].pop('identities', None)
+
+    @staticmethod
+    def align_face_fnet(img, landmarks):
+        """ Shorthand for aling_face() for FaceNet 160x160x3 """
+        return FaceApplications.align_face(img, landmarks, intensity=1., sz=160, ortho=True, expand=1.5, scale_limit=2.)
 
     @staticmethod
     def align_face(img, landmarks, intensity=0.5, sz=48, ortho=False, expand=1.0, scale_limit=0.):

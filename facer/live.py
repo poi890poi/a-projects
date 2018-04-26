@@ -86,11 +86,30 @@ def main(args):
         'e36e': 'Emma Watson',
         '3283': 'Taylor Swift',
         'ed29': "Conan O'Brien",
-        'c584': "Harrison Ford",
-        '62c6': "Graham Norton",
-        '0d26': "Reese Witherspoon",
-        '61fa': "Ryan Gosling",
-        'f98c': "no one",
+        '8565': 'Harrison Ford',
+        '3b59': 'Harrison Ford',
+        '2708': 'Graham Norton',
+        'cf72': 'Graham Norton',
+        'a50f': 'Graham Norton',
+        '7fc6': 'Reese Witherspoon',
+        '3d44': 'Reese Witherspoon',
+        '6b57': 'Reese Witherspoon',
+        '6ec2': 'Reese Witherspoon',
+        '5d5b': 'Ryan Gosling',
+        '5ab9': 'Ryan Gosling',
+        '6259': 'Ryan Gosling',
+        '8910': "no one",
+        '0e3f': 'Margot Robbie',
+        '2e35': 'Margot Robbie',
+        '36fa': 'Nicole Kidman',
+        'ed15': 'Simon Pegg',
+        'fd0f': 'Simon Pegg',
+        '24ab': 'Simon Pegg',
+        '6a43': 'Tom Cruise',
+        'cfd3': 'Tom Cruise',
+        'a334': 'Rebecca Ferguson',
+        '4405': 'Rebecca Ferguson',
+        '5f72': 'Henry Cavill',
     }
     tests = {
         'cn01': {
@@ -119,6 +138,15 @@ def main(args):
         },
         'hf01': {
             'video': '../../data/youtube_clips/graham/h_ford_01.mp4',
+        },
+        'hf02': {
+            'video': '../../data/youtube_clips/graham/h_ford_02.mp4',
+        },
+        'tc01': {
+            'video': '../../data/youtube_clips/graham/t_cruise_01.mp4',
+        },
+        'tc02': {
+            'video': '../../data/youtube_clips/graham/t_cruise_02.mp4',
         },
     }
     # Initialize video capture object
@@ -222,9 +250,10 @@ def main(args):
             last_response = out_queue.get_nowait()
             t_now = time.time() * 1000
             latency = t_now - last_response['agent']['t_frame']
-            if latency > 800:
+            if latency > 1200:
                 # Result out-dated
                 last_response = None
+                print('SKIP RESULT')
             print('frame to display()', latency)
         except Empty:
             pass
@@ -271,7 +300,7 @@ def main(args):
         cv2.imshow('frame', frame)
         key = cv2.waitKey(1) & 0xFF
         if key==ord('q'):
-            print('QQQQQQQ')
+            print('EXIT')
             break
         elif key==ord('r'):
             mode = 'register'

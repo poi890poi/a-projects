@@ -1,7 +1,7 @@
 import logging, sys, traceback
 
 LOG_DIRECTORY = '../log/'
-formatter = logging.Formatter('[%(asctime)s] %(levelname)s (%(process)d) %(module)s No%(lineno)d: %(message)s')
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s (%(process)d) %(module)s Ln%(lineno)d: %(message)s')
 
 sh = logging.StreamHandler(sys.stdout)
 sh.setLevel(logging.DEBUG)
