@@ -82,13 +82,13 @@ class Extent:
     def eval(self):
         return self.extent
 
-class DetectionTask():
+class ThreadTask():
     """
     A task is a container to hold input parameters and output results for detection.
     It's pushed into the synchronized queue to be staged for detection.
     A task only holds variables and does not do intensive computing.
     """
-    def __init__(self, img, params):
+    def __init__(self, img=None, params=None):
         self.img = img
         self.params = params
         self.t_queued = time.time() * 1000
@@ -97,7 +97,7 @@ class DetectionTask():
         # For sending embeddings from detection thread to embedding thread
         self.embeddings = None
 
-        # For sending data to be saved to LocalDiskIOThread
+        # For sending data to be saved to FileWritingThread
         self.write = None
 
 class ThreadBase(threading.Thread):
@@ -284,7 +284,7 @@ class FaceEmbeddingAgent():
                     # This is for debugging and has significant impact on performance
                     for index, images in enumerate(self.face_images_cluster):
                         name, count = self.face_names_cluster[index]
-                        dir = self.dir_embeddings + name
+                        dir = self.dir_embeddings + '/' + name
                         if not os.path.isdir(dir):
                             os.makedirs(dir)
                         debug('images, name: {}, images: {}'.format(name, len(images)))
@@ -300,11 +300,10 @@ class FaceEmbeddingAgent():
                         #'images': self.face_images_cluster,
                         'names_to_index': self.names_to_index,
                     }
-                    with open(self.fn_embeddings, 'w') as fw:
-                        fw.write(json.dumps(json_obj, cls=NumpyEncoder))
+                    if FaceApplications().file_write(self.fn_embeddings, json.dumps(json_obj, cls=NumpyEncoder)):
+                        self.is_tree_outsync = False
 
                     self.t_save_face_tree = 0
-                    self.is_tree_outsync = False
         except:
             self.thread._on_crash()
             #exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -328,7 +327,7 @@ class FaceEmbeddingAgent():
             pass
         print(threading.current_thread(), 'Embeddings restored.')
 
-class LocalDiskIOThread(ThreadBase):
+class FileWritingThread(ThreadBase):
     def _init_derived(self):
         pass
 
@@ -349,7 +348,12 @@ class LocalDiskIOThread(ThreadBase):
                 t_now = time.time() * 1000 # Timing is essential for threading. It's a good practice to keep track of processing time for each thread.
                 task = self.in_queue.get() # queue::get() is blocking by default
 
-                # Do its job...
+                if task.write is not None:
+                    filepath = task.write['filepath']
+                    content = task.write['content']
+                    with open(filepath, 'w') as fw:
+                        fw.write(content)
+                        info('{} bytes of data written to file {} succesfully'.format(len(content), filepath))
 
                 self.in_queue.task_done() # Must be called or the queue will be fulled eventually
             except:
@@ -660,7 +664,7 @@ class FaceDetectionThread(ThreadBase):
                     if not use_last_predictions and not use_last_recognition:
                         FaceApplications().on_predictions(task.params['agent'], t_now, predictions)
 
-                    info('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000-task.t_queued, threading.current_thread()))
+                    debug('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000-task.t_queued, threading.current_thread()))
                     task.params['output_holder'].put_nowait({'predictions': predictions})
 
                 self.in_queue.task_done()
@@ -989,10 +993,11 @@ class FaceApplications(VisionMainThread):
         self.core_threads = []
         self.in_queue = Queue(maxsize=8)
         self.emb_queue = Queue(maxsize=32)
+        self.io_queue = Queue(maxsize=64)
 
         self.face_tree = {}
         self.face_names_flatten = {}
-        
+
         for i in range(2): # Spawn 2 threads
             t = FaceDetectionThread(self.in_queue)
             t.setDaemon(True)
@@ -1000,11 +1005,15 @@ class FaceApplications(VisionMainThread):
             t.start()
 
             """# Signal the thread to initialize
-            signal_init = DetectionTask(None, None)
+            signal_init = ThreadTask(None, None)
             signal_init.t_expiration = -1
             t.in_queue.put(signal_init)"""
 
         t = FaceEmbeddingThread(self.emb_queue)
+        t.setDaemon(True)
+        t.start()
+
+        t = FileWritingThread(self.io_queue)
         t.setDaemon(True)
         t.start()
 
@@ -1048,11 +1057,24 @@ class FaceApplications(VisionMainThread):
             info('FaceNet loaded, thread: {}'.format(threading.current_thread()))
         return self.__facenet
 
+    def file_write(self, filepath, content):
+        if not self.io_queue.full():
+            io_task = ThreadTask()
+            io_task.write = {
+                'filepath': filepath,
+                'content': content,
+            }
+            self.io_queue.put_nowait(io_task)
+            return True
+        else:
+            warning('FileWritingThread is busy and discarding data... {} bytes'.format(len(content)))
+            return False
+
     def register_embedding(self, task_embeddings):
         # Queue face embedding to be processed by FaceEmbeddingThread to find candidates to be registered to database of known faces
-        emb_task = DetectionTask(None, None)
-        emb_task.embeddings = task_embeddings
         if not self.emb_queue.full():
+            emb_task = ThreadTask()
+            emb_task.embeddings = task_embeddings
             self.emb_queue.put_nowait(emb_task)
         #print('register_embedding', self.emb_queue.qsize(), task_embeddings['agent'])
 
@@ -1110,7 +1132,7 @@ class FaceApplications(VisionMainThread):
         if self.in_queue.full():
             return False
         else:
-            t = DetectionTask(img, params)
+            t = ThreadTask(img=img, params=params)
             self.in_queue.put_nowait(t)
             return True
 

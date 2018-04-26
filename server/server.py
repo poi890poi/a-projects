@@ -18,7 +18,7 @@ import threading
 import copy
 
 from facer.predict import FaceClassifier
-from facer.face_app import FaceApplications, DetectionTask
+from facer.face_app import FaceApplications
 
 from queue import Queue, Empty
 
