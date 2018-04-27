@@ -104,14 +104,16 @@ def main(args):
         'e334': 'Margot Robbie',
         '9cdd': 'Margot Robbie',
         '79a0': 'Nicole Kidman',
-        'ed15': 'Simon Pegg',
-        'fd0f': 'Simon Pegg',
+        '676d': 'Simon Pegg',
+        '0b83': 'Simon Pegg',
         '24ab': 'Simon Pegg',
-        '6a43': 'Tom Cruise',
-        'cfd3': 'Tom Cruise',
-        'a334': 'Rebecca Ferguson',
-        '4405': 'Rebecca Ferguson',
-        '5f72': 'Henry Cavill',
+        '7b2c': 'Tom Cruise',
+        'bdb2': 'Tom Cruise',
+        '718a': 'Rebecca Ferguson',
+        'e2ed': 'Rebecca Ferguson',
+        '065a': 'Rebecca Ferguson',
+        '46d8': 'Rebecca Ferguson',
+        '3384': 'Henry Cavill',
         'c22a': 'Matt LeBlanc',
         'f2ff': 'Matt LeBlanc',
         '7271': 'Maxine Peake',
@@ -169,15 +171,18 @@ def main(args):
             'video': '../../data/youtube_clips/m_wahlberg_02.mp4',
         },
     }
+
     # Initialize video capture object
+    is_live = False
     if args.vfile:
         cap = cv2.VideoCapture(args.vfile)
     elif args.test:
         cap = cv2.VideoCapture(tests[args.test]['video'])
         length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        print( length )
+        interval_frame = 1000. / cap.get(cv2.CAP_PROP_FPS)
     else:
         cap = cv2.VideoCapture(0)
+        is_live = True
 
     interval = 1./25.
     t_ = time.time() + interval
@@ -199,84 +204,95 @@ def main(args):
     cd_play_ctrl = 0
     is_paused = False
 
+    frame_count = 0
+    time_sync = 0
+    t_initial_frame = 0
+
+    skip = False
+
     while(True):
-        # Capture frame-by-frame
-        if not is_paused:
-            ret, frame = cap.read()
-            if not ret:
-                print('No more frame')
-                break
-            cached = np.array(frame)
+        
+        if skip:
+            cap.grab()
+
         else:
-            frame = np.array(cached)
-
-        if frame is None:
-            continue
-        t_frame = time.time() * 1000
-
-        # Our operations on the frame come here
-        #gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        f_ += 1
-        if time.time() > t_:
-            # Do something every <interval> seconds
-
-            retval, bin_data = cv2.imencode('.jpg', frame)
-            requests = {
-                "requests": [
-                    {
-                        "requestId": "3287de74a3c742ccc81e80eab881eaec",
-                        "media": {
-                            "content": base64.b64encode(bin_data).decode()
-                        },
-                        "services": [
-                            {
-                                "type": "face",
-                                #"model": "a-emoc", # Request emotion recognition
-                                "model": "fnet",
-                                "mode": mode,
-                                "options": {
-                                    "res_cap": 448,
-                                    "factor": 0.6,
-                                    "interp": "NEAREST",
-                                    "fnet-cooldown": 1500,
-                                }
-                            }
-                        ]
-                    }
-                ],
-                'agent': {
-                    'agentId': AGENT_ID,
-                    't_frame': t_frame,
-                    #'debug': 1,
-                },
-                'timing': {
-                    'client_sent': time.time() * 1000,
-                    't_expiration': (time.time() + 0.25) * 1000,
-                }
-            }
-
-            if in_queue.full():
-                # in_queue is full
-                pass
+            # Capture frame-by-frame
+            if not is_paused:
+                ret, frame = cap.read()
+                if not ret:
+                    print('No more frame')
+                    break
+                cached = np.array(frame)
             else:
-                in_queue.put_nowait(requests)
-                #print('qsize', in_queue.qsize())
+                frame = np.array(cached)
 
-            f_ = 0
-            t_ = time.time() + interval
+            if frame is None:
+                continue
+            t_frame = time.time() * 1000
 
-        try:
-            last_response = out_queue.get_nowait()
-            t_now = time.time() * 1000
-            latency = t_now - last_response['agent']['t_frame']
-            if latency > 1200:
-                # Result out-dated
-                last_response = None
-                print('SKIP RESULT')
-            print('frame to display()', latency)
-        except Empty:
-            pass
+            # Our operations on the frame come here
+            #gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            f_ += 1
+            if time.time() > t_:
+                # Do something every <interval> seconds
+
+                retval, bin_data = cv2.imencode('.jpg', frame)
+                requests = {
+                    "requests": [
+                        {
+                            "requestId": "3287de74a3c742ccc81e80eab881eaec",
+                            "media": {
+                                "content": base64.b64encode(bin_data).decode()
+                            },
+                            "services": [
+                                {
+                                    "type": "face",
+                                    #"model": "a-emoc", # Request emotion recognition
+                                    "model": "fnet",
+                                    "mode": mode,
+                                    "options": {
+                                        "res_cap": 448,
+                                        "factor": 0.6,
+                                        "interp": "NEAREST",
+                                        "fnet-cooldown": 1500,
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    'agent': {
+                        'agentId': AGENT_ID,
+                        't_frame': t_frame,
+                        #'debug': 1,
+                    },
+                    'timing': {
+                        'client_sent': time.time() * 1000,
+                        't_expiration': (time.time() + 0.25) * 1000,
+                    }
+                }
+
+                if in_queue.full():
+                    # in_queue is full
+                    pass
+                else:
+                    in_queue.put_nowait(requests)
+                    #print('qsize', in_queue.qsize())
+
+                f_ = 0
+                t_ = time.time() + interval
+
+            try:
+                last_response = out_queue.get_nowait()
+                t_now = time.time() * 1000
+                latency = t_now - last_response['agent']['t_frame']
+                if latency > 1200:
+                    # Result out-dated
+                    last_response = None
+                    print('SKIP RESULT')
+                print('frame to display()', latency)
+            except Empty:
+                pass
 
         if last_response:
             #print(len(t.response['responses'][0]['services'][0]['results']['rectangles']))
@@ -310,7 +326,7 @@ def main(args):
             osd.append('PAUSED')
         y_ = 30
         for line in osd:
-            cv2.putText(frame, line, (10, y_), font, 1, (0, 255, 0), 1, cv2.LINE_AA)
+            cv2.putText(frame, line, (10, y_), font, 0.7, (0, 255, 0), 1, cv2.LINE_AA)
             y_ += 36
 
         if time.time() > t_register_expiration:
@@ -318,6 +334,22 @@ def main(args):
 
         # Display the resulting frame
         cv2.imshow('frame', frame)
+
+        if not is_live:
+            # Precise frame rate control
+            skip = False
+            t_offset = time_sync - (time.time()*1000-t_initial_frame)
+            #print(time_sync, t_offset)
+            if t_offset > 0:
+                time.sleep(t_offset/1000)
+            else:
+                skip = True
+
+            if t_initial_frame==0:
+                t_initial_frame = time.time() * 1000
+            frame_count += 1
+            time_sync += interval_frame
+
         key = cv2.waitKey(1) & 0xFF
         if key==ord('q'):
             print('EXIT')

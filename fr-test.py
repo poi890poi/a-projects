@@ -17,6 +17,7 @@ from server.server import *
 from emotion.emotion_recognition import fxpress, fxpress_train
 from facer.emotion import EmotionClassifier
 from facer.face_app import FaceApplications
+from facer.profiling import *
 
 from mtcnn import detect_face as FaceDetector
 from facenet import facenet
@@ -41,6 +42,8 @@ def main():
     elif ARGS.test=='fer':
         fer(ARGS)
 
+    elif ARGS.test=='profiling':
+        profiling(ARGS)
     elif ARGS.test=='facenet':
         print(facenet)
 
