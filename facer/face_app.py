@@ -597,50 +597,7 @@ class FaceDetectionThread(ThreadBase):
                         predictions = self.detect(task.img, task.params)
 
                     # Lazy recognition mechanism
-                    use_last_recognition = False
-                    if agstate is not None:
-                        if 'identities' in agstate['predictions'] and len(predictions['rectangles']):
-                            if 'service' in task.params and 'mode' in task.params['service'] and task.params['service']['mode']=='register':
-                                # Do not use lazy recognition mechanism when registering a face
-                                pass
-                            else:
-                                t_recognition = agstate['t_recognition']
-                                #debug('Check lazy recognition, t_recognition: {}, interval_recognition: {}'.format(t_now-t_recognition, LAZY_RECOGNITION))
-                                if t_now-t_recognition < LAZY_RECOGNITION: # Check if face recognition results are outdated
-                                    confidence_decay = (t_now-t_recognition) / (LAZY_RECOGNITION)
-                                    len_frame_now = len(predictions['rectangles'])
-                                    len_frame_last = len(agstate['predictions']['rectangles'])
-                                    frame_id = []
-                                    frame_id = frame_id + [0]*len_frame_now
-                                    frame_id = frame_id + [1]*len_frame_last
-                                    rectangles = predictions['rectangles'] + agstate['predictions']['rectangles']
-
-                                    # Calculate IOU of rectangles to determine if faces in 2 frames belong to a single identity
-                                    clusters = imutil.group_rectangles_miniou(rectangles, threshold=0.5)
-                                    #debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
-                                    name = [''] * len_frame_now
-                                    confidence = [0.] * len_frame_now
-                                    #debug('Initialize name and confidence {} {} {}'.format(len_frame_now, name, confidence))
-                                    for pair in clusters:
-                                        if len(pair)==2: # Only one-one overlapping is considered same face
-                                            index_now = pair[0]
-                                            index_last = pair[1]
-                                            if frame_id[index_now]!=frame_id[index_last]: # Overlapped rectangles not in the same frame
-                                                # Rectangles IOU overlapped
-                                                index_last = pair[1] - len_frame_now
-                                                name[index_now] = agstate['predictions']['identities']['name'][index_last]
-                                                confidence[index_now] = agstate['predictions']['identities']['confidence'][index_last] * confidence_decay
-                                                if len(name[index_now]): use_last_recognition = True
-
-                                    if use_last_recognition:
-                                        predictions['identities'] = {
-                                            'name': name,
-                                            'confidence': confidence,
-                                        }
-                                        if 'recognition' in predictions:
-                                            # Remove 'recognition' in predictions to skip face recognition computation
-                                            predictions.pop('recognition', None)
-                                        debug('Use lazy recognition, {}'.format(predictions['identities']))
+                    use_last_recognition = self.check_lazy_recognition(t_now, task, agstate, predictions)
                     
                     if 'recognition' in predictions and len(predictions['recognition']['rectangles']):
                         #print('embeddings', predictions['embeddings'])
@@ -668,8 +625,13 @@ class FaceDetectionThread(ThreadBase):
                         #print(predictions)
                         predictions.pop('recognition', None) # embeddings are not supposed to be returned to client
 
+                    # Keep results in memory for lazy detection. This must be before 2nd pass lazy recognition to prevent resursive use of lazy results
                     if not use_last_predictions and not use_last_recognition:
                         FaceApplications().on_predictions(task.params['agent'], t_now, predictions)
+
+                    # Second pass of lazy recognition. Use previous recognition results to annotate any unrecognized face
+                    if not use_last_recognition:
+                        self.check_lazy_recognition(t_now, task, agstate, predictions)
 
                     debug('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000-task.t_queued, threading.current_thread()))
                     task.params['output_holder'].put_nowait({'predictions': predictions})
@@ -678,6 +640,62 @@ class FaceDetectionThread(ThreadBase):
 
             except:
                 self._on_crash()
+
+    def check_lazy_recognition(self, t_now, task, agstate, predictions):
+        use_last_recognition = False
+
+        if agstate is not None:
+            if 'identities' in agstate['predictions'] and len(predictions['rectangles']):
+                if 'service' in task.params and 'mode' in task.params['service'] and task.params['service']['mode']=='register':
+                    # Do not use lazy recognition mechanism when registering a face
+                    pass
+                else:
+                    t_recognition = agstate['t_recognition']
+                    #debug('Check lazy recognition, t_recognition: {}, interval_recognition: {}'.format(t_now-t_recognition, LAZY_RECOGNITION))
+                    if t_now-t_recognition < LAZY_RECOGNITION: # Check if face recognition results are outdated
+                        confidence_decay = (t_now-t_recognition) / (LAZY_RECOGNITION)
+                        len_frame_now = len(predictions['rectangles'])
+                        len_frame_last = len(agstate['predictions']['rectangles'])
+                        frame_id = []
+                        frame_id = frame_id + [0]*len_frame_now
+                        frame_id = frame_id + [1]*len_frame_last
+                        rectangles = predictions['rectangles'] + agstate['predictions']['rectangles']
+
+                        # Calculate IOU of rectangles to determine if faces in 2 frames belong to a single identity
+                        clusters = imutil.group_rectangles_miniou(rectangles, threshold=0.5)
+                        #debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
+                        name = [''] * len_frame_now
+                        confidence = [0.] * len_frame_now
+                        #debug('Initialize name and confidence {} {} {}'.format(len_frame_now, name, confidence))
+                        for pair in clusters:
+                            if len(pair)==2: # Only one-one overlapping is considered same face
+                                index_now = pair[0]
+                                index_last = pair[1]
+                                if frame_id[index_now]!=frame_id[index_last]: # Overlapped rectangles not in the same frame
+                                    # Rectangles IOU overlapped
+                                    index_last = pair[1] - len_frame_now
+                                    name[index_now] = agstate['predictions']['identities']['name'][index_last]
+                                    confidence[index_now] = agstate['predictions']['identities']['confidence'][index_last] * confidence_decay
+                                    if len(name[index_now]): use_last_recognition = True
+
+                        if use_last_recognition:
+                            if 'identities' in predictions:
+                                for i, c in enumerate(predictions['identities']['confidence']):
+                                    if c <= 0:
+                                        predictions['identities']['name'][i] = name[i]
+                                        predictions['identities']['confidence'][i] = confidence[i]
+                                debug('Append lazy recognition, {}'.format(predictions['identities']))
+                            else:
+                                predictions['identities'] = {
+                                    'name': name,
+                                    'confidence': confidence,
+                                }
+                                if 'recognition' in predictions:
+                                    # Remove 'recognition' in predictions to skip face recognition computation
+                                    predictions.pop('recognition', None)
+                                debug('Use lazy recognition, {}'.format(predictions['identities']))
+
+        return use_last_recognition
 
     def detect(self, img, params):
         """
