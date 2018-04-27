@@ -51,8 +51,9 @@ RUN_MODE_DEBUG = True
 
 # Lazy mechanism use results of previous detection if time difference
 # of consecutive frame is within the constants defined here (in seconds)
-LAZY_DETECTION = 125.
-LAZY_RECOGNITION = 1000.
+LAZY_LIMIT = 125.
+LAZY_DETECTION = 500.
+LAZY_RECOGNITION = 1250.
 
 """
 - Array plane is (custom) defined as coordinate system of y (row) before x (col),
@@ -581,23 +582,55 @@ class FaceDetectionThread(ThreadBase):
 
                     # Lazy detection mechanism
                     agstate = None
-                    use_last_predictions = False
+                    use_last_detection = False
                     if agent_id in FaceApplications().agent_state:
                         agstate = FaceApplications().agent_state[agent_id]
                         t_detection = agstate['t_detection']
-                        if t_now-t_detection < LAZY_DETECTION:
+                        t_delay = t_now - t_detection
+                        if t_delay < LAZY_LIMIT:
                             # Last detection results are still fresh and can be responded directly
-                            use_last_predictions = True
+                            use_last_detection = True
                             predictions = copy.deepcopy(agstate['predictions'])
                             if 'identities' in predictions: predictions.pop('identities', None)
-                            debug('Use lazy detection, {}, {}'.format(t_now-t_detection, LAZY_DETECTION))
-                            #debug('Check lazy detection, t_detection: {}, t_recognition: {}, interval_detection: {}, interval_recognition: {}'.format(t_now-t_detection, t_now-t_recognition, LAZY_DETECTION, LAZY_RECOGNITION))
+                            debug('Use lazy detection level 2, {}, {}'.format(t_delay, LAZY_LIMIT))
+                            #debug('Check lazy detection, t_detection: {}, t_recognition: {}, interval_detection: {}, interval_recognition: {}'.format(t_delay, t_now-t_recognition, LAZY_DETECTION, LAZY_RECOGNITION))
 
-                    if not use_last_predictions:
-                        predictions = self.detect(task.img, task.params)
+                    # MTCNN detection with ROI
+                    mapping = None
+                    if not use_last_detection:
+                        if agstate and t_delay < LAZY_DETECTION:
+                            debug('Use lazy detection level 1, {}, {}'.format(t_delay, LAZY_DETECTION))
+                            task.params['lazy'] = agstate['predictions']
+                            predictions = self.detect(task.img, task.params)
+
+                            if 'rectangles' in predictions and len(predictions['rectangles']) and 'predictions' in agstate and len(agstate['predictions']['rectangles']):
+                                mapping = self.get_rect_mapping(predictions['rectangles'], agstate['predictions']['rectangles'])
+
+                            if mapping is not None:
+                                debug('Extend lazy detection level 1')
+                                agstate['predictions']['rectangles'] = predictions['rectangles']
+                                
+                                # Extend lazy detection
+                                agstate['t_detection'] = t_now 
+                                agstate['t_recognition'] = t_now
+
+                            use_last_detection = True
+                        else:
+                            predictions = self.detect(task.img, task.params)
 
                     # Lazy recognition mechanism
-                    use_last_recognition = self.check_lazy_recognition(t_now, task, agstate, predictions)
+                    if agstate and mapping is None:
+                        if 'rectangles' in predictions and len(predictions['rectangles']) and 'predictions' in agstate and len(agstate['predictions']['rectangles']):
+                            mapping = self.get_rect_mapping(predictions['rectangles'], agstate['predictions']['rectangles'])
+                        else:
+                            debug('Rectangles are not tracked, {}, {}'.format(('rectangles' in predictions), (agstate and 'predictions' in agstate)))
+                        
+                    if agstate and mapping is None:
+                        # Reset lazy recognition
+                        agstate['t_recognition'] = 0
+                        agstate['predictions'].pop('identities', None)
+
+                    use_last_recognition = self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
                     
                     if 'recognition' in predictions and len(predictions['recognition']['rectangles']):
                         #print('embeddings', predictions['embeddings'])
@@ -624,16 +657,24 @@ class FaceDetectionThread(ThreadBase):
                         }
                         #print(predictions)
                         predictions.pop('recognition', None) # embeddings are not supposed to be returned to client
+                    else:
+                        debug('NO DATA FOR RECOGNITION')
 
                     # Keep results in memory for lazy detection. This must be before 2nd pass lazy recognition to prevent resursive use of lazy results
-                    if not use_last_predictions and not use_last_recognition:
+                    if not use_last_detection and not use_last_recognition:
                         FaceApplications().on_predictions(task.params['agent'], t_now, predictions)
 
                     # Second pass of lazy recognition. Use previous recognition results to annotate any unrecognized face
                     if not use_last_recognition:
-                        self.check_lazy_recognition(t_now, task, agstate, predictions)
+                        self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
 
                     debug('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000-task.t_queued, threading.current_thread()))
+                    if 'identities' not in predictions:
+                        print()
+                        debug('RECOGNITION NULL')
+                        print()
+                    else:
+                        debug('IDENTITIES: {}'.format(predictions['identities']))
                     task.params['output_holder'].put_nowait({'predictions': predictions})
 
                 self.in_queue.task_done()
@@ -641,10 +682,43 @@ class FaceDetectionThread(ThreadBase):
             except:
                 self._on_crash()
 
-    def check_lazy_recognition(self, t_now, task, agstate, predictions):
-        use_last_recognition = False
+    def get_rect_mapping(self, rlist1, rlist2):
+        debug('get_rect_mapping, {}, {}'.format(rlist1, rlist2))
+        len_frame_now = len(rlist1)
+        len_frame_last = len(rlist2)
+        
+        if len_frame_now >= len_frame_last:
+            frame_id = []
+            frame_id = frame_id + [0]*len_frame_now
+            frame_id = frame_id + [1]*len_frame_last
 
-        if agstate is not None:
+            mapping = {}
+
+            rectangles = rlist1 + rlist2
+            clusters = imutil.group_rectangles_miniou(rectangles, threshold=0.4)
+            debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
+            name = [''] * len_frame_now
+            confidence = [0.] * len_frame_now
+            #debug('Initialize name and confidence {} {} {}'.format(len_frame_now, name, confidence))
+            for pair in clusters:
+                if len(pair)==2: # Only one-one overlapping is considered same face
+                    index_now = pair[0]
+                    index_last = pair[1]
+                    if frame_id[index_now]!=frame_id[index_last]: # Overlapped rectangles not in the same frame
+                        # Rectangles IOU overlapped
+                        index_last = pair[1] - len_frame_now
+                        mapping[index_now] = index_last
+            
+            if len(mapping)==len_frame_now:
+                # All rectangles can be mapped to previous rectangles
+                debug('All rectangles are tracked {}'.format(mapping))
+                return mapping
+
+        debug('Not all rectangles are tracked, now: {}, prev: {}'.format(len_frame_now, len_frame_last))
+        return None
+
+    def check_lazy_recognition(self, t_now, task, agstate, predictions, mapping):
+        if agstate is not None and mapping is not None:
             if 'identities' in agstate['predictions'] and len(predictions['rectangles']):
                 if 'service' in task.params and 'mode' in task.params['service'] and task.params['service']['mode']=='register':
                     # Do not use lazy recognition mechanism when registering a face
@@ -653,49 +727,36 @@ class FaceDetectionThread(ThreadBase):
                     t_recognition = agstate['t_recognition']
                     #debug('Check lazy recognition, t_recognition: {}, interval_recognition: {}'.format(t_now-t_recognition, LAZY_RECOGNITION))
                     if t_now-t_recognition < LAZY_RECOGNITION: # Check if face recognition results are outdated
-                        confidence_decay = (t_now-t_recognition) / (LAZY_RECOGNITION)
-                        len_frame_now = len(predictions['rectangles'])
-                        len_frame_last = len(agstate['predictions']['rectangles'])
-                        frame_id = []
-                        frame_id = frame_id + [0]*len_frame_now
-                        frame_id = frame_id + [1]*len_frame_last
-                        rectangles = predictions['rectangles'] + agstate['predictions']['rectangles']
-
-                        # Calculate IOU of rectangles to determine if faces in 2 frames belong to a single identity
-                        clusters = imutil.group_rectangles_miniou(rectangles, threshold=0.5)
-                        #debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
-                        name = [''] * len_frame_now
-                        confidence = [0.] * len_frame_now
-                        #debug('Initialize name and confidence {} {} {}'.format(len_frame_now, name, confidence))
-                        for pair in clusters:
-                            if len(pair)==2: # Only one-one overlapping is considered same face
-                                index_now = pair[0]
-                                index_last = pair[1]
-                                if frame_id[index_now]!=frame_id[index_last]: # Overlapped rectangles not in the same frame
-                                    # Rectangles IOU overlapped
-                                    index_last = pair[1] - len_frame_now
-                                    name[index_now] = agstate['predictions']['identities']['name'][index_last]
-                                    confidence[index_now] = agstate['predictions']['identities']['confidence'][index_last] * confidence_decay
-                                    if len(name[index_now]): use_last_recognition = True
-
-                        if use_last_recognition:
-                            if 'identities' in predictions:
-                                for i, c in enumerate(predictions['identities']['confidence']):
-                                    if c <= 0:
-                                        predictions['identities']['name'][i] = name[i]
-                                        predictions['identities']['confidence'][i] = confidence[i]
-                                debug('Append lazy recognition, {}'.format(predictions['identities']))
+                        confidence_decay = 1. #(t_now-t_recognition) / (LAZY_RECOGNITION)
+                        name = []
+                        confidence = []
+                        for i in range(len(predictions['rectangles'])):
+                            if mapping[i] < len(agstate['predictions']['identities']['name']):
+                                name.append(agstate['predictions']['identities']['name'][mapping[i]])
+                                confidence.append(agstate['predictions']['identities']['confidence'][mapping[i]])
                             else:
-                                predictions['identities'] = {
-                                    'name': name,
-                                    'confidence': confidence,
-                                }
-                                if 'recognition' in predictions:
-                                    # Remove 'recognition' in predictions to skip face recognition computation
-                                    predictions.pop('recognition', None)
-                                debug('Use lazy recognition, {}'.format(predictions['identities']))
+                                debug('A face in previous frame is missing')
+                                return False
 
-        return use_last_recognition
+                        if 'identities' in predictions:
+                            for i, c in enumerate(predictions['identities']['confidence']):
+                                if c <= 0:
+                                    predictions['identities']['name'][i] = name[i]
+                                    predictions['identities']['confidence'][i] = confidence[i]
+                            debug('Append lazy recognition, {}'.format(predictions['identities']))
+                        else:
+                            predictions['identities'] = {
+                                'name': name,
+                                'confidence': confidence,
+                            }
+                            if 'recognition' in predictions:
+                                # Remove 'recognition' in predictions to skip face recognition computation
+                                predictions.pop('recognition', None)
+                            debug('Use lazy recognition, {}'.format(predictions['identities']))
+
+            return True
+
+        return False
 
     def detect(self, img, params):
         """
@@ -766,65 +827,76 @@ class FaceDetectionThread(ThreadBase):
             pnet = detector['pnet']
             rnet = detector['rnet']
             onet = detector['onet']
-            extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
-            predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
 
-            # For testing, detect second time with ROIs (like in tracking mode)
-            """
-            # Pending; this is difficult to implement for multi-threading.
-            if len(extents):
-                t_ = time.time()
-                height, width, *_ = resized.shape
-                #print()
-                #print('shape', resized.shape)
-                #print('extents', extents)
+            if 'lazy' in params:
+                # Lazy detection level 1 performs MTCNN detection only in area with previously detected faces
+                grouped_extents = np.empty((0, 5))
+                grouped_landmarks = np.empty((0, 5, 2))
+
+                # Detect only area with previously detected faces within time interval T < LAZT_DETECTION
+                # Convert rectangles back to extents
+                extents = np.array(params['lazy']['rectangles'], dtype=np.float) / scale_factor
+                for i, e in enumerate(extents):
+                    extents[i][2] += e[0]
+                    extents[i][3] += e[1]
+
                 # Expand extents
+                height, width, *_ = resized.shape
                 for i, e in enumerate(extents):
                     w = e[2] - e[0]
                     h = e[3] - e[1]
-                    extents[i] += np.array((-w, -h, w, h, 0), dtype=np.float)
+                    extents[i] += np.array((-w, -h, w, h), dtype=np.float)
                     e = extents[i]
-                    extents[i] = np.array((max(e[0], 0), max(e[1], 0), min(e[2], width-1), min(e[3], height-1), e[4]), dtype=np.float)
-                #print('expand', extents)
+                    extents[i] = np.array((max(e[0], 0), max(e[1], 0), min(e[2], width-1), min(e[3], height-1)), dtype=np.float)
+
                 # Group overlapped extents
                 for iteration in range(16):
                     no_overlap = True
                     for i1, e1 in enumerate(extents):
-                        if e1[4]==0: continue
+                        if e1[2]==0: continue
                         for i2, e2 in enumerate(extents):
-                            if e2[4]==0: continue
+                            if e2[2]==0: continue
                             if i1!=i2:
                                 if e2[0]>e1[2] or e2[1]>e1[3] or e2[2]<e1[0] or e2[3]<e1[1]:
                                     pass
                                 else:
+                                    extents[i1] = np.array((min((e1[0], e2[0])), min((e1[1], e2[1])), max((e1[2], e2[2])), max((e1[3], e2[3]))), dtype=np.float)
+                                    extents[i2] = np.array((0, 0, 0, 0), dtype=np.float)
                                     no_overlap = False
-                                    extents[i1] = np.array((min((e1[0], e2[0])), min((e1[1], e2[1])), max((e1[2], e2[2])), max((e1[3], e2[3])), 1), dtype=np.float)
-                                    extents[i2] = np.array((0, 0, 0, 0, 0), dtype=np.float)
                     if no_overlap: break
+
                 #print(type(extents[0]))
                 #print('group', extents)
                 predictions['timing']['prepare_roi'] = (time.time() - t_) * 1000
                 t_ = time.time()
                 for i, e in enumerate(extents):
-                    if e[4] > 0:
+                    offset_ = np.array([e[0], e[1], e[0], e[1], 0])
+                    if e[2] > 0:
                         e = e.astype(dtype=np.int)
                         roi = resized[e[1]:e[3], e[0]:e[2], :]
                         _extents, _landmarks = FaceDetector.detect_face(roi, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
-                        #print()
-                        #print(i, roi.shape)
-                        #print(_extents)
-                predictions['timing']['mtcnn_roi'] = (time.time() - t_) * 1000
-                predictions['timing']['mtcnn_roi_total'] = predictions['timing']['prepare_roi'] + predictions['timing']['mtcnn_roi']
-            """
+                        if len(_extents):
+                            #print('_extents', _extents.shape)
+                            #print('_landmarks', _landmarks.shape)
+                            _extents += offset_
+                            _landmarks += offset_[0:2]
+                            #print('shape of grouped', grouped_extents.shape, grouped_landmarks.shape)
+                            grouped_extents = np.concatenate((grouped_extents, _extents))
+                            grouped_landmarks = np.concatenate((grouped_landmarks, _landmarks))
+                            #print()
+                            #print(i, roi.shape)
+                            #print(_extents)
+                extents = grouped_extents
+                landmarks = grouped_landmarks
+            
+            else:
+                # Detect whole frame
+                extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
+
+            predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
 
             if len(landmarks):
                 landmarks = np.array(landmarks) * scale_factor
-            """if len(extents):
-                _ = np.array(landmarks) * scale_factor
-                _ = _.reshape(2, -1)
-                _ = np.transpose(_)
-                _ = _.reshape((-1, len(extents), 2))
-                landmarks = np.swapaxes(_, 0, 1)"""
 
             if model=='a-emoc':
                 facelist = np.zeros((len(extents), 48, 48), dtype=np.float)
@@ -1186,9 +1258,9 @@ class FaceApplications(VisionMainThread):
         if 'identities' in predictions:
             agstate['t_recognition'] = t_detection
             agstate['identities'] = predictions['identities']
-        else:
+        """else:
             agstate['t_recognition'] = 0
-            agstate['predictions'].pop('identities', None)
+            agstate['predictions'].pop('identities', None)"""
 
     @staticmethod
     def align_face_fnet(img, landmarks):

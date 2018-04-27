@@ -312,8 +312,8 @@ def detect_face(img, minsize, pnet, rnet, onet, threshold, factor, interpolation
         raise ValueError('Input image must have 3 channels')
 
     factor_count = 0
-    total_boxes = np.empty((0,9))
-    points = []
+    total_boxes = np.empty((0, 9))
+    points = np.empty((0, 5, 2))
     h = img.shape[0]
     w = img.shape[1]
     minl = np.amin([h, w])

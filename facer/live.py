@@ -101,6 +101,7 @@ def main(args):
         '8fb6': 'Ryan Gosling',
         '750d': 'Ryan Gosling',
         '887f': "no one",
+        'c530': "no one",
         'e334': 'Margot Robbie',
         '9cdd': 'Margot Robbie',
         '79a0': 'Nicole Kidman',
@@ -211,7 +212,7 @@ def main(args):
     skip = False
 
     while(True):
-        
+
         if skip:
             cap.grab()
 
