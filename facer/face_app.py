@@ -28,15 +28,20 @@ from queue import Queue, Empty
 import threading
 import traceback
 
-FACE_EMBEDDING_THRESHOLD_HIGH = 0.5375 # High precision 99%
-FACE_EMBEDDING_THRESHOLD_RECALL = 0.584375 # High recall 96%. This is used for querying to optimize recall
-FACE_EMBEDDING_THRESHOLD_LOW = 0.378125 # Very high precision 99.866777%. This is used for finding existing identity during registering new faces
+# These thresholds are for InceptionResnet V1 FaceNet
+#FACE_EMBEDDING_THRESHOLD_HIGH = 0.5375 # High precision 99%
+#FACE_EMBEDDING_THRESHOLD_RECALL = 0.584375 # High recall 96%. This is used for querying to optimize recall
+#FACE_EMBEDDING_THRESHOLD_LOW = 0.378125 # Very high precision 99.866777%. This is used for finding existing identity during registering new faces
+
+FACE_EMBEDDING_THRESHOLD_HIGH = 0.4625 # High precision 91%
+FACE_EMBEDDING_THRESHOLD_RECALL = 0.509375 # High recall 93%. This is used for querying to optimize recall
+FACE_EMBEDDING_THRESHOLD_LOW = 0.321875 # Very high precision 99.10%. This is used for finding existing identity during registering new faces
 
 # The number of face samples required for registration of an identity
 # (additional FACE_EMBEDDING_SAMPLE_SIZE will be added later for increase accuracy and keeps record up to date)
-FACE_EMBEDDING_SAMPLE_SIZE = 6
+FACE_EMBEDDING_SAMPLE_SIZE = 4
 
-FACE_RECOGNITION_CONCURRENT = 1
+FACE_RECOGNITION_CONCURRENT = 2
 FACE_RECOGNITION_REMEMBER = 32
 FACE_RECOGNITION_DIR = '../models/face_registered'
 INTERVAL_TASK_EXPIRATION = 500. # Task expiration time before being processed by a thread
@@ -47,7 +52,7 @@ RUN_MODE_DEBUG = True
 # Lazy mechanism use results of previous detection if time difference
 # of consecutive frame is within the constants defined here (in seconds)
 LAZY_DETECTION = 125.
-LAZY_RECOGNITION = 2000.
+LAZY_RECOGNITION = 1000.
 
 """
 - Array plane is (custom) defined as coordinate system of y (row) before x (col),
@@ -199,17 +204,19 @@ class FaceEmbeddingAgent():
             self.face_images_cluster[index].append((np.array(image)*255).astype(dtype=np.uint8))
 
         # Mix initial samples and appending samples, while keeping at least FACE_EMBEDDING_SAMPLE_SIZE of initial samples
-        if len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 3:
+        if len(self.face_embeddings_cluster[index]) > FACE_EMBEDDING_SAMPLE_SIZE * 5:
             if index < len(self.face_images_cluster) and len(self.face_images_cluster[index])==len(self.face_embeddings_cluster[index]):
+                # Shuffle while keeping initial FACE_EMBEDDING_SAMPLE_SIZE samples
                 embeddings_shuffle_trim = self.face_embeddings_cluster[index][FACE_EMBEDDING_SAMPLE_SIZE::]
                 images_shuffle_trim = self.face_images_cluster[index][FACE_EMBEDDING_SAMPLE_SIZE::]
                 embeddings_shuffle_trim, images_shuffle_trim = shuffle(embeddings_shuffle_trim, images_shuffle_trim)
-                self.face_embeddings_cluster[index] = self.face_embeddings_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + embeddings_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE]
-                self.face_images_cluster[index] = self.face_images_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + images_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE]
+                # Trim 2/5 samples
+                self.face_embeddings_cluster[index] = self.face_embeddings_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + embeddings_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE*2]
+                self.face_images_cluster[index] = self.face_images_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + images_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE*2]
             else:
                 embeddings_shuffle_trim = self.face_embeddings_cluster[index][FACE_EMBEDDING_SAMPLE_SIZE::]
                 embeddings_shuffle_trim = shuffle(embeddings_shuffle_trim)
-                self.face_embeddings_cluster[index] = self.face_embeddings_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + embeddings_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE]
+                self.face_embeddings_cluster[index] = self.face_embeddings_cluster[index][0:FACE_EMBEDDING_SAMPLE_SIZE] + embeddings_shuffle_trim[0:FACE_EMBEDDING_SAMPLE_SIZE*2]
 
         self.is_tree_dirty = True
 
@@ -1096,8 +1103,14 @@ class FaceApplications(VisionMainThread):
         if agent_id in self.face_tree:
             embeddings = sklearn.preprocessing.normalize(embeddings)
             for i, emb in enumerate(embeddings):
-                distance, index = self.face_tree[agent_id].query(emb, FACE_EMBEDDING_SAMPLE_SIZE)
+                distance, index = self.face_tree[agent_id].query(emb, 1)
+                
+                if distance < FACE_EMBEDDING_THRESHOLD_RECALL:
+                    #print('similar face', distance, index, self.face_names_flatten[agent_id][index[0]])
+                    confidences[i] = 1. - distance
+                    names[i] = self.face_names_flatten[agent_id][index]
 
+                """
                 # Find most frequent matched name
                 name_freq = {}
                 name_freq_max = 0
@@ -1114,7 +1127,8 @@ class FaceApplications(VisionMainThread):
                     #print('query_embedding, neighbor', name, distance[j])
 
                 # At least FACE_EMBEDDING_SAMPLE_SIZE/2 samples are required to consider a positive match
-                if name_freq_max*2 >= FACE_EMBEDDING_SAMPLE_SIZE:
+                #if name_freq_max*2 >= FACE_EMBEDDING_SAMPLE_SIZE:
+                if name_freq_max:
                     d = []
                     for j, face_index in enumerate(index):
                         if self.face_names_flatten[agent_id][face_index]==name_freq_name:
@@ -1124,6 +1138,7 @@ class FaceApplications(VisionMainThread):
                         #print('similar face', distance, index, self.face_names_flatten[agent_id][index[0]])
                         confidences[i] = 1. - d_mean
                         names[i] = name_freq_name
+                """
         
         return (names, confidences)
 

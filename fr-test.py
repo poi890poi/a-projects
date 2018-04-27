@@ -50,7 +50,8 @@ def main():
         # Load the model
         t_ = time.time()
         print('Loading model...')
-        sess = facenet.load_model('../models/facenet/model-20170512-110547.ckpt')
+        #fnet = facenet.load_model('../models/facenet/20180204-160909') # squeezenet
+        fnet = facenet.load_model('../models/facenet/20170512-110547.pb') # InceptionResnet V1
         t_ = time.time() - t_
         print('done', t_*1000)
 
@@ -69,15 +70,15 @@ def main():
                 'sqr_avg': 0.,
                 'count': 0,
             },
-            'precision': {}
+            'precision': {},
+            'timing': {
+                'count': 0,
+                'forward': 0.
+            }
         }
 
-        with sess.as_default():
+        if True:
             # Get input and output tensors
-            images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-            embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-            phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-
             emb = None
             names = []
             for iteration in range(16):
@@ -91,7 +92,7 @@ def main():
                         break
 
                     n = os.path.split(os.path.split(f.path)[0])[1]
-                    print('name', n)
+                    #print('name', n)
                     n = abs(hash(n)) % (10 ** 8)
 
                     img = cv2.imread(f.path, 1)
@@ -123,16 +124,19 @@ def main():
                 # Run forward pass to calculate embeddings
                 if len(images):
                     t_ = time.time()
-                    feed_dict = { images_placeholder: images, phase_train_placeholder:False }
                     if emb is None:
-                        emb = sess.run(embeddings, feed_dict=feed_dict)
+                        emb = fnet(images)
                     else:
-                        print('embedding', emb.shape)
-                        emb = np.concatenate((emb, sess.run(embeddings, feed_dict=feed_dict)))
+                        emb = np.concatenate((emb, fnet(images)))
                         #emb = emb + sess.run(embeddings, feed_dict=feed_dict)
                     t_ = time.time() - t_
+                    stats['timing']['count'] += len(images)
+                    stats['timing']['forward'] += t_*1000
                     print('forward', emb.shape, t_*1000)
                     print()
+
+            print()
+            print('avg. forward time:', stats['timing']['forward']/stats['timing']['count'])
 
             # Test distance
             samples = sklearn.preprocessing.normalize(emb)
@@ -207,7 +211,7 @@ def main():
     elif ARGS.test=='face_app':
         face_app = FaceApplications()
         face_app.detect()
-    elif ARGS.test=='face_benchmark':
+    elif ARGS.test=='face_benchmark': # Test different parameters, resolutions, interpolation methods for MTCNN face detection time vs precision
         interpolations = ['NEAREST', 'LINEAR', 'AREA']
         resolutions = [256, 320, 384, 448, 512, 640, 1024, 1280]
         factors = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
