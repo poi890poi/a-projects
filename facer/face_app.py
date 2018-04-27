@@ -1053,7 +1053,8 @@ class FaceApplications(VisionMainThread):
     def get_facenet_create(self):
         if self.__facenet is None:
             info('Loading FaceNet, thread: {}'.format(threading.current_thread()))
-            self.__facenet = facenet.load_model('../models/facenet/model-20170512-110547.ckpt')
+            #self.__facenet = facenet.load_model('../models/facenet/20170512-110547.pb') # InceptionResnet V1
+            self.__facenet = facenet.load_model('../models/facenet/20180204-160909') # squeezenet
             info('FaceNet loaded, thread: {}'.format(threading.current_thread()))
         return self.__facenet
 

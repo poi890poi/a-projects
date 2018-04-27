@@ -376,29 +376,33 @@ def load_model(model):
                              # otherwise error 'NotFoundError: Key is_training not found in checkpoint'
                              # will be encountered when restoring checkpoints
 
-    g_ = tf.Graph()
-    with g_.as_default():
-        with gfile.FastGFile('../models/facenet/20170512-110547.pb', 'rb') as f:
-            graph_def = tf.GraphDef()
-            graph_def.ParseFromString(f.read())
-            tf.import_graph_def(graph_def, name='')
+    if os.path.isfile(model): # Load from .pb file
+        g_ = tf.Graph()
+        with g_.as_default():
+            with gfile.FastGFile(model, 'rb') as f:
+                graph_def = tf.GraphDef()
+                graph_def.ParseFromString(f.read())
+                tf.import_graph_def(graph_def, name='')
 
-        sess = tf.Session(graph=g_)
-        for op in g_.get_operations():
-            op_name = str(op.name)
-            if not op_name.startswith('InceptionResnet'):
-                print(op_name)
+            sess = tf.Session(graph=g_)
+            for op in g_.get_operations():
+                op_name = str(op.name)
+                if not op_name.startswith('InceptionResnet'):
+                    print(op_name)
 
-    """with sess.as_default():
-        images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-        embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-        phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-        feed_dict = { images_placeholder: np.zeros((1, 160, 160, 3), dtype=np.float), phase_train_placeholder: False }
-        sess.run(embeddings, feed_dict=feed_dict)"""
+            init = tf.global_variables_initializer()
+            sess.run(init)
 
-    """checkpoint = '../models/facenet/model-20170512-110547'
-    saver = tf.train.Saver(filename=checkpoint)
-    saver.restore(self.sess, checkpoint)"""
+    else: # Load from checkpoint and meta files
+        g_ = tf.Graph()
+        with g_.as_default():
+            sess = tf.Session(graph=g_)
+
+            meta_file, ckpt_file = get_model_filenames(model)
+            print('Metagraph file: %s' % meta_file)
+            print('Checkpoint file: %s' % ckpt_file)
+            saver = tf.train.import_meta_graph(os.path.join(model, meta_file))
+            saver.restore(sess, os.path.join(model, ckpt_file))
 
     #fnet = lambda faces : sess.run(('embeddings:0'), feed_dict={'input:0': faces})
     #fnet = lambda faces : sess.run(g_.get_tensor_by_name("embeddings:0"), feed_dict={'input:0': faces, 'phase_train:0': False})

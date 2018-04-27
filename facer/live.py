@@ -15,6 +15,10 @@ import argparse
 from queue import Queue, Empty
 import threading
 
+AGENT_ID = 'Lee.Lin'
+SERVICE_ENDPOINT = 'http://192.168.41.41:9000/predict'
+#SERVICE_ENDPOINT = 'http://10.129.11.4:9000/predict'
+
 in_queue = Queue(maxsize=1)
 out_queue = Queue(maxsize=8)
 
@@ -45,8 +49,7 @@ class ThreadUrl(threading.Thread):
                 postdata = json.dumps(task)
                 try:
                     #self.response = None
-                    url = 'http://192.168.41.41:9000/predict'
-                    #url = 'http://10.129.11.4:9000/predict'
+                    url = SERVICE_ENDPOINT
                     r = http.request('POST', url, body=postdata.encode())
                     response = json.loads(r.data.decode())
                     timing = response['timing']
@@ -86,22 +89,21 @@ def main(args):
         'e36e': 'Emma Watson',
         '3283': 'Taylor Swift',
         'ed29': "Conan O'Brien",
-        '8565': 'Harrison Ford',
-        '3b59': 'Harrison Ford',
-        '2708': 'Graham Norton',
-        'cf72': 'Graham Norton',
-        'a50f': 'Graham Norton',
-        '7fc6': 'Reese Witherspoon',
-        '3d44': 'Reese Witherspoon',
-        '6b57': 'Reese Witherspoon',
-        '6ec2': 'Reese Witherspoon',
-        '5d5b': 'Ryan Gosling',
-        '5ab9': 'Ryan Gosling',
-        '6259': 'Ryan Gosling',
-        '8910': "no one",
-        '0e3f': 'Margot Robbie',
-        '2e35': 'Margot Robbie',
-        '36fa': 'Nicole Kidman',
+        '6d22': 'Harrison Ford',
+        '6db6': 'Harrison Ford',
+        '8e3d': 'Harrison Ford',
+        '30f4': 'Graham Norton',
+        '9f48': 'Graham Norton',
+        'd4a1': 'Reese Witherspoon',
+        '2b21': 'Reese Witherspoon',
+        'd4bb': 'Reese Witherspoon',
+        '6c55': 'Reese Witherspoon',
+        '8fb6': 'Ryan Gosling',
+        '750d': 'Ryan Gosling',
+        '887f': "no one",
+        'e334': 'Margot Robbie',
+        '9cdd': 'Margot Robbie',
+        '79a0': 'Nicole Kidman',
         'ed15': 'Simon Pegg',
         'fd0f': 'Simon Pegg',
         '24ab': 'Simon Pegg',
@@ -110,6 +112,12 @@ def main(args):
         'a334': 'Rebecca Ferguson',
         '4405': 'Rebecca Ferguson',
         '5f72': 'Henry Cavill',
+        'c22a': 'Matt LeBlanc',
+        'f2ff': 'Matt LeBlanc',
+        '7271': 'Maxine Peake',
+        '6578': 'Benedict Cumberbatch',
+        '372f': 'Matt Damon',
+        'cf2e': 'Mark Wahlberg',
     }
     tests = {
         'cn01': {
@@ -147,6 +155,18 @@ def main(args):
         },
         'tc02': {
             'video': '../../data/youtube_clips/graham/t_cruise_02.mp4',
+        },
+        'bc01': {
+            'video': '../../data/youtube_clips/graham/b_cumberbatch_01.mp4',
+        },
+        'md01': {
+            'video': '../../data/youtube_clips/m_damon_01.mp4',
+        },
+        'mw01': {
+            'video': '../../data/youtube_clips/m_wahlberg_01.mp4',
+        },
+        'mw02': {
+            'video': '../../data/youtube_clips/m_wahlberg_02.mp4',
         },
     }
     # Initialize video capture object
@@ -226,7 +246,7 @@ def main(args):
                     }
                 ],
                 'agent': {
-                    'agentId': '192.168.41.41',
+                    'agentId': AGENT_ID,
                     't_frame': t_frame,
                     #'debug': 1,
                 },
