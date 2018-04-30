@@ -280,7 +280,7 @@ class PredictHandler(tornado.web.RequestHandler):
                         if 'content' in request['media']:
                             # Hard-cap length of media/contant at 2MB to save server resource
                             if len(request['media']['content']) > 2*1024*1024:
-                                self.set_status(400)
+                                self.set_status(413)
                                 self.finish('Content of media too large for request ' + request['requestId'])
                                 return
 
@@ -292,7 +292,7 @@ class PredictHandler(tornado.web.RequestHandler):
                         t_ = time.time()
                         if img is None: img = self.__format_image(request['media'])
                         if img is None:
-                            self.set_status(400)
+                            self.set_status(415)
                             self.finish("Unable to load media for request " + request['requestId'])
                             debug('Unable to load media {}'.format(request['media']))
                             return
@@ -317,13 +317,13 @@ class PredictHandler(tornado.web.RequestHandler):
                                 #print('.get() latency', (time.time() - t_) * 1000)
                             else:
                                 # Detection threadings are busy
-                                warning('Server is busy')
-                                self.set_status(503)
+                                self.set_status(429)
+                                self.finish('Server is busy')
                                 return
 
                             if output is None: # Detection thread skips this frame
-                                warning('Server is busy')
-                                self.set_status(503)
+                                self.set_status(429)
+                                self.finish('Too many requests')
                                 return
 
                             service['results'] = output['predictions']

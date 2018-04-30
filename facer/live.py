@@ -51,18 +51,20 @@ class ThreadUrl(threading.Thread):
                     #self.response = None
                     url = SERVICE_ENDPOINT
                     r = http.request('POST', url, body=postdata.encode())
-                    response = json.loads(r.data.decode())
-                    timing = response['timing']
-                    server_time = timing['server_sent'] - timing['server_rcv']
-                    total_time = t_now - timing['client_sent']
-                    client_time = total_time - server_time
-                    #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
-                    response['agent'] = task['agent']
-                    if not self.out_queue.full():
-                        self.out_queue.put_nowait(response)
-                    print('frame to http response', t_now - task['agent']['t_frame'])
-                    #print('response time:', total_time)
-                    print()
+                    if r.status==200:
+                        response = json.loads(r.data.decode())
+                        timing = response['timing']
+                        server_time = timing['server_sent'] - timing['server_rcv']
+                        total_time = t_now - timing['client_sent']
+                        client_time = total_time - server_time
+                        #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
+                        response['agent'] = task['agent']
+                        if not self.out_queue.full():
+                            self.out_queue.put_nowait(response)
+                        print('frame to http response', t_now - task['agent']['t_frame'])
+                        #print('response time:', total_time)
+                    else:
+                        print(r.status, r.data.decode())
                 except URLError:
                     pass
                     
@@ -89,22 +91,26 @@ def main(args):
         'e36e': 'Emma Watson',
         '3283': 'Taylor Swift',
         'ed29': "Conan O'Brien",
-        '6d22': 'Harrison Ford',
-        '6db6': 'Harrison Ford',
-        '8e2d': 'Harrison Ford',
-        '30f4': 'Graham Norton',
-        '9f48': 'Graham Norton',
-        'd4a1': 'Reese Witherspoon',
-        '2b21': 'Reese Witherspoon',
-        'd4bb': 'Reese Witherspoon',
-        '6c55': 'Reese Witherspoon',
-        '8fb6': 'Ryan Gosling',
-        '750d': 'Ryan Gosling',
-        '887f': "no one",
+        '3e97': 'Harrison Ford',
+        '9479': 'Harrison Ford',
+        '6561': 'Harrison Ford',
+        '52cc': 'Graham Norton',
+        '69d3': 'Graham Norton',
+        '7530': 'Graham Norton',
+        '50ef': 'Reese Witherspoon',
+        '0705': 'Reese Witherspoon',
+        '3035': 'Reese Witherspoon',
+        'f49c': 'Reese Witherspoon',
+        'a579': 'Reese Witherspoon',
+        'd734': 'Reese Witherspoon',
+        '444a': 'Ryan Gosling',
+        'b96c': 'Ryan Gosling',
+        '2eaf': "no one",
         'c530': "no one",
-        'e334': 'Margot Robbie',
-        '9cdd': 'Margot Robbie',
-        '79a0': 'Nicole Kidman',
+        '1ff2': 'Margot Robbie',
+        'b275': 'Margot Robbie',
+        'e09a': 'Margot Robbie',
+        'd7fc': 'Nicole Kidman',
         '676d': 'Simon Pegg',
         '0b83': 'Simon Pegg',
         '24ab': 'Simon Pegg',
@@ -121,6 +127,7 @@ def main(args):
         '6578': 'Benedict Cumberbatch',
         '372f': 'Matt Damon',
         'cf2e': 'Mark Wahlberg',
+        '35ff': 'Shailene Woodley',
     }
     tests = {
         'cn01': {
@@ -212,7 +219,6 @@ def main(args):
     skip = False
 
     while(True):
-
         if skip:
             cap.grab()
 
@@ -277,6 +283,7 @@ def main(args):
                     # in_queue is full
                     pass
                 else:
+                    print()
                     in_queue.put_nowait(requests)
                     #print('qsize', in_queue.qsize())
 
@@ -317,6 +324,8 @@ def main(args):
                                 s_index = str(round(service['results']['sort_index'][str(i)], 2))
                                 tag = '{}'.format(s_index)
                                 cv2.putText(frame, tag, (r[0], r[1]), font, 0.7, (255, 255, 0), 1, cv2.LINE_AA)"""
+        else:
+            print('No cached result')
 
         pos = cap.get(cv2.CAP_PROP_POS_MSEC)
         pos_str = time_string(pos)

@@ -51,9 +51,12 @@ RUN_MODE_DEBUG = True
 
 # Lazy mechanism use results of previous detection if time difference
 # of consecutive frame is within the constants defined here (in seconds)
-LAZY_LIMIT = 125.
-LAZY_DETECTION = 500.
-LAZY_RECOGNITION = 1250.
+LAZY_INTERVAL_SKIP = 125.
+LAZY_INTERVAL_ROI = 500.
+LAZY_IOU = 0.4
+LAZY_USE_NONE = 0 # Perform everything as normal
+LAZY_USE_SKIP = 1 # Skip everything because 2 consecutive frames have interval T < LAZY_INTERVAL_SKIP
+LAZY_USE_ROI = 2 # All faces in previous frame can be succesfully mapped to current frame with IOU < LAZY_IOU and interval T < LAZY_INTERVAL_ROI
 
 """
 - Array plane is (custom) defined as coordinate system of y (row) before x (col),
@@ -571,110 +574,107 @@ class FaceDetectionThread(ThreadBase):
 
                 task = self.in_queue.get() # queue::get() is blocking by default
 
-                if time.time() > task.t_expiration:
+                is_registering = False
+                if 'mode' in task.params['service'] and task.params['service']['mode']=='register':
+                    is_registering = True
+
+                agent_id = task.params['agent']['agentId']
+                agstate = None
+                t_delay = 24 * 60 * 60 * 1000
+                if agent_id in FaceApplications().agent_state:
+                    agstate = FaceApplications().agent_state[agent_id]
+                    t_delay = t_now - agstate['t_detection']
+
+                # Do not skip any frame for registration, to improve initial time required to get registration, thus enhancing use experience
+                if time.time() > task.t_expiration and not is_registering:
                     # Threads are busy and fail to process the task in time
                     # Something must be put in output queue for calling thread is waiting with get()
                     task.params['output_holder'].put_nowait(None)
+                    #debug('SKIP, BUSY, {}'.format(time.time()-task.t_expiration))
+
+                elif agstate and t_delay < LAZY_INTERVAL_SKIP:
+                    # Rrequest for detection too frequent; ignore this request
+                    task.params['output_holder'].put_nowait(None)
+                    #debug('SKIP, TOO FREQUENT, {}, {}, {}'.format(t_delay, LAZY_INTERVAL_SKIP, agstate['t_detection']))
+
                 else:
                     #print(threading.current_thread(), 'queue to exec', time.time()*1000 - task.t_queued)
                     #print(task.params)
-                    agent_id = task.params['agent']['agentId']
 
                     # Lazy detection mechanism
-                    agstate = None
-                    use_last_detection = False
-                    if agent_id in FaceApplications().agent_state:
-                        agstate = FaceApplications().agent_state[agent_id]
-                        t_detection = agstate['t_detection']
-                        t_delay = t_now - t_detection
-                        if t_delay < LAZY_LIMIT:
-                            # Last detection results are still fresh and can be responded directly
-                            use_last_detection = True
-                            predictions = copy.deepcopy(agstate['predictions'])
-                            if 'identities' in predictions: predictions.pop('identities', None)
-                            debug('Use lazy detection level 2, {}, {}'.format(t_delay, LAZY_LIMIT))
-                            #debug('Check lazy detection, t_detection: {}, t_recognition: {}, interval_detection: {}, interval_recognition: {}'.format(t_delay, t_now-t_recognition, LAZY_DETECTION, LAZY_RECOGNITION))
+                    lazy_level = LAZY_USE_NONE
 
                     # MTCNN detection with ROI
                     mapping = None
-                    if not use_last_detection:
-                        if agstate and t_delay < LAZY_DETECTION:
-                            debug('Use lazy detection level 1, {}, {}'.format(t_delay, LAZY_DETECTION))
-                            task.params['lazy'] = agstate['predictions']
-                            predictions = self.detect(task.img, task.params)
+                    if agstate and t_delay < LAZY_INTERVAL_ROI:
+                        task.params['lazy'] = agstate['predictions']
+                        predictions = self.detect(task.img, task.params)
+                        task.params.pop('lazy', None)
 
-                            if 'rectangles' in predictions and len(predictions['rectangles']) and 'predictions' in agstate and len(agstate['predictions']['rectangles']):
-                                mapping = self.get_rect_mapping(predictions['rectangles'], agstate['predictions']['rectangles'])
-
-                            if mapping is not None:
-                                debug('Extend lazy detection level 1')
-                                agstate['predictions']['rectangles'] = predictions['rectangles']
-                                
-                                # Extend lazy detection
-                                agstate['t_detection'] = t_now 
-                                agstate['t_recognition'] = t_now
-
-                            use_last_detection = True
-                        else:
-                            predictions = self.detect(task.img, task.params)
-
-                    # Lazy recognition mechanism
-                    if agstate and mapping is None:
                         if 'rectangles' in predictions and len(predictions['rectangles']) and 'predictions' in agstate and len(agstate['predictions']['rectangles']):
-                            mapping = self.get_rect_mapping(predictions['rectangles'], agstate['predictions']['rectangles'])
-                        else:
-                            debug('Rectangles are not tracked, {}, {}'.format(('rectangles' in predictions), (agstate and 'predictions' in agstate)))
+                            mapping = self.get_rect_mapping(predictions['rectangles'], agstate['predictions']['rectangles'], LAZY_IOU)
+
+                    if mapping is not None:
+                        # Lazy detection with ROIs
+                        debug('ROI detection')
+                        lazy_level = LAZY_USE_ROI
+                        if not is_registering: self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
                         
-                    if agstate and mapping is None:
-                        # Reset lazy recognition
-                        agstate['t_recognition'] = 0
-                        agstate['predictions'].pop('identities', None)
-
-                    use_last_recognition = self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
-                    
-                    if 'recognition' in predictions and len(predictions['recognition']['rectangles']):
-                        #print('embeddings', predictions['embeddings'])
-                        names_, confidences_ = FaceApplications().query_embedding(task.params['agent']['agentId'], predictions['recognition']['embeddings'])
-
-                        # Register faces only on request to prevent false positive new face registering
-                        task_embeddings = {
-                            'agent': task.params['agent'],
-                            'names': names_,
-                            'confidences': confidences_,
-                            'recognition': predictions['recognition'],
-                        }
-                        FaceApplications().register_embedding(task_embeddings)
-
-                        n_rect = len(predictions['rectangles'])
-                        names = [''] * n_rect
-                        confidences = [0.] * n_rect
-                        for s_index, a_index in enumerate(predictions['recognition']['index']):
-                            names[a_index] = names_[s_index]
-                            confidences[a_index] = confidences_[s_index]
-                        predictions['identities'] = {
-                            'name': names,
-                            'confidence': confidences,
-                        }
-                        #print(predictions)
-                        predictions.pop('recognition', None) # embeddings are not supposed to be returned to client
                     else:
-                        debug('NO DATA FOR RECOGNITION')
+                        # Full frame detection
+                        predictions = self.detect(task.img, task.params)
+                        debug('Full frame detection')
+
+                    # Check if there's any recognized identity; recognition will be performed regardlessly if there's no recognized identity
+                    any_recognized = False
+                    if 'identities' in predictions:
+                        for c in predictions['identities']['confidence']:
+                            if c > 0:
+                                any_recognized = True
+                                break
+                        if any_recognized:
+                            for i, c in enumerate(predictions['identities']['confidence']):
+                                predictions['identities']['confidence'][i] = min(0.1, c)
+
+                    # Registration always use up-to-date recognition results to prevent mixing of face from different identities
+                    if 'identities' not in predictions or not any_recognized:
+                        if 'recognition' in predictions and len(predictions['recognition']['rectangles']):
+                            debug('Perform recognition {}'.format(len(predictions['recognition']['embeddings'])))
+                            #print('embeddings', predictions['embeddings'])
+                            names_, confidences_ = FaceApplications().query_embedding(task.params['agent']['agentId'], predictions['recognition']['embeddings'])
+
+                            # Register faces only on request to prevent false positive new face registering
+                            task_embeddings = {
+                                'agent': task.params['agent'],
+                                'names': names_,
+                                'confidences': confidences_,
+                                'recognition': predictions['recognition'],
+                            }
+                            FaceApplications().register_embedding(task_embeddings)
+
+                            n_rect = len(predictions['rectangles'])
+                            names = [''] * n_rect
+                            confidences = [0.] * n_rect
+                            for s_index, a_index in enumerate(predictions['recognition']['index']):
+                                names[a_index] = names_[s_index]
+                                confidences[a_index] = confidences_[s_index]
+                            predictions['identities'] = {
+                                'name': names,
+                                'confidence': confidences,
+                            }
+
+                        else:
+                            debug('NO DATA FOR RECOGNITION')
+
+                        is_fresh_results = True
+
+                    if 'recognition' in predictions:
+                        predictions.pop('recognition', None) # embeddings are not supposed to be returned to client
 
                     # Keep results in memory for lazy detection. This must be before 2nd pass lazy recognition to prevent resursive use of lazy results
-                    if not use_last_detection and not use_last_recognition:
-                        FaceApplications().on_predictions(task.params['agent'], t_now, predictions)
-
-                    # Second pass of lazy recognition. Use previous recognition results to annotate any unrecognized face
-                    if not use_last_recognition:
-                        self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
+                    FaceApplications().on_predictions(task.params['agent'], t_now, predictions)
 
                     debug('FaceDetectionThread task done, elapsed: {}, thread: {}'.format(time.time()*1000-task.t_queued, threading.current_thread()))
-                    if 'identities' not in predictions:
-                        print()
-                        debug('RECOGNITION NULL')
-                        print()
-                    else:
-                        debug('IDENTITIES: {}'.format(predictions['identities']))
                     task.params['output_holder'].put_nowait({'predictions': predictions})
 
                 self.in_queue.task_done()
@@ -682,12 +682,12 @@ class FaceDetectionThread(ThreadBase):
             except:
                 self._on_crash()
 
-    def get_rect_mapping(self, rlist1, rlist2):
-        debug('get_rect_mapping, {}, {}'.format(rlist1, rlist2))
+    def get_rect_mapping(self, rlist1, rlist2, threshold):
+        #debug('get_rect_mapping, {}, {}'.format(rlist1, rlist2))
         len_frame_now = len(rlist1)
         len_frame_last = len(rlist2)
         
-        if len_frame_now >= len_frame_last:
+        if len_frame_now and len_frame_last and len_frame_now >= len_frame_last:
             frame_id = []
             frame_id = frame_id + [0]*len_frame_now
             frame_id = frame_id + [1]*len_frame_last
@@ -695,8 +695,8 @@ class FaceDetectionThread(ThreadBase):
             mapping = {}
 
             rectangles = rlist1 + rlist2
-            clusters = imutil.group_rectangles_miniou(rectangles, threshold=0.4)
-            debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
+            clusters = imutil.group_rectangles_miniou(rectangles, threshold=threshold)
+            #debug('Check IOU, clusters: {}, frame_id: {}'.format(clusters, frame_id))
             name = [''] * len_frame_now
             confidence = [0.] * len_frame_now
             #debug('Initialize name and confidence {} {} {}'.format(len_frame_now, name, confidence))
@@ -711,48 +711,44 @@ class FaceDetectionThread(ThreadBase):
             
             if len(mapping)==len_frame_now:
                 # All rectangles can be mapped to previous rectangles
-                debug('All rectangles are tracked {}'.format(mapping))
+                #debug('All rectangles are tracked {}'.format(mapping))
                 return mapping
 
-        debug('Not all rectangles are tracked, now: {}, prev: {}'.format(len_frame_now, len_frame_last))
+        #debug('Not all rectangles are tracked, now: {}, prev: {}'.format(len_frame_now, len_frame_last))
         return None
 
     def check_lazy_recognition(self, t_now, task, agstate, predictions, mapping):
         if agstate is not None and mapping is not None:
-            if 'identities' in agstate['predictions'] and len(predictions['rectangles']):
-                if 'service' in task.params and 'mode' in task.params['service'] and task.params['service']['mode']=='register':
-                    # Do not use lazy recognition mechanism when registering a face
-                    pass
-                else:
-                    t_recognition = agstate['t_recognition']
-                    #debug('Check lazy recognition, t_recognition: {}, interval_recognition: {}'.format(t_now-t_recognition, LAZY_RECOGNITION))
-                    if t_now-t_recognition < LAZY_RECOGNITION: # Check if face recognition results are outdated
-                        confidence_decay = 1. #(t_now-t_recognition) / (LAZY_RECOGNITION)
-                        name = []
-                        confidence = []
-                        for i in range(len(predictions['rectangles'])):
-                            if mapping[i] < len(agstate['predictions']['identities']['name']):
-                                name.append(agstate['predictions']['identities']['name'][mapping[i]])
-                                confidence.append(agstate['predictions']['identities']['confidence'][mapping[i]])
-                            else:
-                                debug('A face in previous frame is missing')
-                                return False
+            if 'identities' in agstate['predictions']:
+                t_recognition = agstate['t_recognition']
+                #debug('Check lazy recognition, t_recognition: {}, interval_recognition: {}'.format(t_now-t_recognition, LAZY_RECOGNITION))
 
-                        if 'identities' in predictions:
-                            for i, c in enumerate(predictions['identities']['confidence']):
-                                if c <= 0:
-                                    predictions['identities']['name'][i] = name[i]
-                                    predictions['identities']['confidence'][i] = confidence[i]
-                            debug('Append lazy recognition, {}'.format(predictions['identities']))
-                        else:
-                            predictions['identities'] = {
-                                'name': name,
-                                'confidence': confidence,
-                            }
-                            if 'recognition' in predictions:
-                                # Remove 'recognition' in predictions to skip face recognition computation
-                                predictions.pop('recognition', None)
-                            debug('Use lazy recognition, {}'.format(predictions['identities']))
+                confidence_decay = 1. #(t_now-t_recognition) / (LAZY_RECOGNITION)
+                name = []
+                confidence = []
+                for i in range(len(predictions['rectangles'])):
+                    if mapping[i] < len(agstate['predictions']['identities']['name']):
+                        name.append(agstate['predictions']['identities']['name'][mapping[i]])
+                        confidence.append(agstate['predictions']['identities']['confidence'][mapping[i]])
+                    else:
+                        debug('A face in previous frame is missing')
+                        return False
+
+                if 'identities' in predictions:
+                    for i, c in enumerate(predictions['identities']['confidence']):
+                        if c <= 0:
+                            predictions['identities']['name'][i] = name[i]
+                            predictions['identities']['confidence'][i] = confidence[i]
+                    debug('Append lazy recognition, {}'.format(predictions['identities']))
+                else:
+                    predictions['identities'] = {
+                        'name': name,
+                        'confidence': confidence,
+                    }
+                    if 'recognition' in predictions:
+                        # Remove 'recognition' in predictions to skip face recognition computation
+                        predictions.pop('recognition', None)
+                    #debug('Use lazy recognition, {}'.format(predictions['identities']))
 
             return True
 
@@ -777,232 +773,237 @@ class FaceDetectionThread(ThreadBase):
             },
             'timing': {},
         }
-        if 'service' in params:
-            #{'type': 'face', 'options': {'resultsLimit': 5}, 'model': '12-net'}
-            service = params['service']
-            model = service['model']
 
-            mode = ''
-            if 'mode' in service: mode = service['mode']
+        try:
+            if 'service' in params:
+                #{'type': 'face', 'options': {'resultsLimit': 5}, 'model': '12-net'}
+                service = params['service']
+                model = service['model']
 
-            # Limit image size for performance
-            #print('service', service)
-            t_ = time.time()
+                mode = ''
+                if 'mode' in service: mode = service['mode']
 
-            # Prepare parameters
-            res_cap = 448
-            factor = 0.6
-            interp = cv2.INTER_NEAREST
-            if 'options' in service:
-                options = service['options']
-                if 'res_cap' in options:
-                    res_cap = int(options['res_cap'])
-                if 'factor' in options:
-                    factor = float(options['factor'])
-                if 'interp' in options:
-                    if options['interp']=='LINEAR':
-                        interp = cv2.INTER_LINEAR
-                    elif options['interp']=='AREA':
-                        interp = cv2.INTER_AREA
-            if factor > 0.9: factor = 0.9
-            elif factor < 0.45: factor = 0.45
-            # For performance reason, resolution is hard-capped at 800, which is suitable for most applications
-            if res_cap > 800: res_cap = 800
-            elif res_cap <= 0: res_cap = 448 # In case client fail to initialize res_cap yet included options in request
-            #print('options', factor, interp)
-            
-            # This is a safe guard to avoid very large image,
-            # for best performance, client is responsible to scale the image before upload
-            resized, scale_factor = imutil.fit_resize(img, maxsize=(res_cap, res_cap), interpolation=interp)
-            scale_factor = 1. / scale_factor
-            predictions['timing']['fit_resize'] = (time.time() - t_) * 1000
-
-            #print('mean', np.mean(img), np.mean(resized))
-
-            #time_start = time.time()
-            #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            # MTCNN face detection
-            t_ = time.time()
-            detector = FaceApplications().get_detector_create()
-            pnet = detector['pnet']
-            rnet = detector['rnet']
-            onet = detector['onet']
-
-            if 'lazy' in params:
-                # Lazy detection level 1 performs MTCNN detection only in area with previously detected faces
-                grouped_extents = np.empty((0, 5))
-                grouped_landmarks = np.empty((0, 5, 2))
-
-                # Detect only area with previously detected faces within time interval T < LAZT_DETECTION
-                # Convert rectangles back to extents
-                extents = np.array(params['lazy']['rectangles'], dtype=np.float) / scale_factor
-                for i, e in enumerate(extents):
-                    extents[i][2] += e[0]
-                    extents[i][3] += e[1]
-
-                # Expand extents
-                height, width, *_ = resized.shape
-                for i, e in enumerate(extents):
-                    w = e[2] - e[0]
-                    h = e[3] - e[1]
-                    extents[i] += np.array((-w, -h, w, h), dtype=np.float)
-                    e = extents[i]
-                    extents[i] = np.array((max(e[0], 0), max(e[1], 0), min(e[2], width-1), min(e[3], height-1)), dtype=np.float)
-
-                # Group overlapped extents
-                for iteration in range(16):
-                    no_overlap = True
-                    for i1, e1 in enumerate(extents):
-                        if e1[2]==0: continue
-                        for i2, e2 in enumerate(extents):
-                            if e2[2]==0: continue
-                            if i1!=i2:
-                                if e2[0]>e1[2] or e2[1]>e1[3] or e2[2]<e1[0] or e2[3]<e1[1]:
-                                    pass
-                                else:
-                                    extents[i1] = np.array((min((e1[0], e2[0])), min((e1[1], e2[1])), max((e1[2], e2[2])), max((e1[3], e2[3]))), dtype=np.float)
-                                    extents[i2] = np.array((0, 0, 0, 0), dtype=np.float)
-                                    no_overlap = False
-                    if no_overlap: break
-
-                #print(type(extents[0]))
-                #print('group', extents)
-                predictions['timing']['prepare_roi'] = (time.time() - t_) * 1000
+                # Limit image size for performance
+                #print('service', service)
                 t_ = time.time()
+
+                # Prepare parameters
+                res_cap = 448
+                factor = 0.6
+                interp = cv2.INTER_NEAREST
+                if 'options' in service:
+                    options = service['options']
+                    if 'res_cap' in options:
+                        res_cap = int(options['res_cap'])
+                    if 'factor' in options:
+                        factor = float(options['factor'])
+                    if 'interp' in options:
+                        if options['interp']=='LINEAR':
+                            interp = cv2.INTER_LINEAR
+                        elif options['interp']=='AREA':
+                            interp = cv2.INTER_AREA
+                if factor > 0.9: factor = 0.9
+                elif factor < 0.45: factor = 0.45
+                # For performance reason, resolution is hard-capped at 800, which is suitable for most applications
+                if res_cap > 800: res_cap = 800
+                elif res_cap <= 0: res_cap = 448 # In case client fail to initialize res_cap yet included options in request
+                #print('options', factor, interp)
+                
+                # This is a safe guard to avoid very large image,
+                # for best performance, client is responsible to scale the image before upload
+                resized, scale_factor = imutil.fit_resize(img, maxsize=(res_cap, res_cap), interpolation=interp)
+                scale_factor = 1. / scale_factor
+                predictions['timing']['fit_resize'] = (time.time() - t_) * 1000
+
+                #print('mean', np.mean(img), np.mean(resized))
+
+                #time_start = time.time()
+                #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                # MTCNN face detection
+                t_ = time.time()
+                detector = FaceApplications().get_detector_create()
+                pnet = detector['pnet']
+                rnet = detector['rnet']
+                onet = detector['onet']
+
+                if 'lazy' in params:
+                    # Lazy detection level 1 performs MTCNN detection only in area with previously detected faces
+                    grouped_extents = np.empty((0, 5))
+                    grouped_landmarks = np.empty((0, 5, 2))
+
+                    # Detect only area with previously detected faces within time interval T < LAZT_DETECTION
+                    # Convert rectangles back to extents
+                    extents = np.array(params['lazy']['rectangles'], dtype=np.float) / scale_factor
+                    for i, e in enumerate(extents):
+                        extents[i][2] += e[0]
+                        extents[i][3] += e[1]
+
+                    # Expand extents
+                    height, width, *_ = resized.shape
+                    for i, e in enumerate(extents):
+                        w = e[2] - e[0]
+                        h = e[3] - e[1]
+                        extents[i] += np.array((-w, -h, w, h), dtype=np.float)
+                        e = extents[i]
+                        extents[i] = np.array((max(e[0], 0), max(e[1], 0), min(e[2], width-1), min(e[3], height-1)), dtype=np.float)
+
+                    # Group overlapped extents
+                    for iteration in range(16):
+                        no_overlap = True
+                        for i1, e1 in enumerate(extents):
+                            if e1[2]==0: continue
+                            for i2, e2 in enumerate(extents):
+                                if e2[2]==0: continue
+                                if i1!=i2:
+                                    if e2[0]>e1[2] or e2[1]>e1[3] or e2[2]<e1[0] or e2[3]<e1[1]:
+                                        pass
+                                    else:
+                                        extents[i1] = np.array((min((e1[0], e2[0])), min((e1[1], e2[1])), max((e1[2], e2[2])), max((e1[3], e2[3]))), dtype=np.float)
+                                        extents[i2] = np.array((0, 0, 0, 0), dtype=np.float)
+                                        no_overlap = False
+                        if no_overlap: break
+
+                    #print(type(extents[0]))
+                    #print('group', extents)
+                    predictions['timing']['prepare_roi'] = (time.time() - t_) * 1000
+                    t_ = time.time()
+                    for i, e in enumerate(extents):
+                        offset_ = np.array([e[0], e[1], e[0], e[1], 0])
+                        if e[2] > 0:
+                            e = e.astype(dtype=np.int)
+                            roi = resized[e[1]:e[3], e[0]:e[2], :]
+                            _extents, _landmarks = FaceDetector.detect_face(roi, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
+                            if len(_extents):
+                                #print('_extents', _extents.shape)
+                                #print('_landmarks', _landmarks.shape)
+                                _extents += offset_
+                                _landmarks += offset_[0:2]
+                                #print('shape of grouped', grouped_extents.shape, grouped_landmarks.shape)
+                                grouped_extents = np.concatenate((grouped_extents, _extents))
+                                grouped_landmarks = np.concatenate((grouped_landmarks, _landmarks))
+                                #print()
+                                #print(i, roi.shape)
+                                #print(_extents)
+                    extents = grouped_extents
+                    landmarks = grouped_landmarks
+                
+                else:
+                    # Detect whole frame
+                    extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
+
+                predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
+
+                if len(landmarks):
+                    landmarks = np.array(landmarks) * scale_factor
+
+                if model=='a-emoc':
+                    facelist = np.zeros((len(extents), 48, 48), dtype=np.float)
+                    predictions['timing']['emoc_prepare'] = 0
+                elif model=='fnet':
+                    aligned_face_list = np.zeros((len(extents), 160, 160, 3), dtype=np.float)
+                    pass
+                
+                #print()
+                #print(extents)
+                sorting_index = {}
                 for i, e in enumerate(extents):
-                    offset_ = np.array([e[0], e[1], e[0], e[1], 0])
-                    if e[2] > 0:
-                        e = e.astype(dtype=np.int)
-                        roi = resized[e[1]:e[3], e[0]:e[2], :]
-                        _extents, _landmarks = FaceDetector.detect_face(roi, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
-                        if len(_extents):
-                            #print('_extents', _extents.shape)
-                            #print('_landmarks', _landmarks.shape)
-                            _extents += offset_
-                            _landmarks += offset_[0:2]
-                            #print('shape of grouped', grouped_extents.shape, grouped_landmarks.shape)
-                            grouped_extents = np.concatenate((grouped_extents, _extents))
-                            grouped_landmarks = np.concatenate((grouped_landmarks, _landmarks))
-                            #print()
-                            #print(i, roi.shape)
-                            #print(_extents)
-                extents = grouped_extents
-                landmarks = grouped_landmarks
-            
-            else:
-                # Detect whole frame
-                extents, landmarks = FaceDetector.detect_face(resized, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
+                    #e_ = (Rectangle(r_[0], r_[1], r_[2], r_[3]).to_extent().eval() * scale_factor).astype(dtype=np.int).tolist()
+                    r_ = (np.array([e[0], e[1], e[2]-e[0], e[3]-e[1]])*scale_factor).astype(dtype=np.int).tolist()
+                    #print('extents', i, e, r_)
+                    predictions['rectangles'].append(r_)
+                    predictions['confidences'].append(e[4])
+                    plist_ = landmarks[i].astype(dtype=np.int).tolist()
+                    predictions['landmarks'].append(plist_)
+                    if model=='a-emoc':
+                        t_ = time.time()
+                        #(x, y, w, h) = imutil.rect_fit_ar(r_, [0, 0, img.shape[1], img.shape[0]], 1., crop=False)
+                        (x, y, w, h) = imutil.rect_fit_points(landmarks[i], )
+                        r_ = np.array([x, y, w, h]).astype(dtype=np.int).tolist()
+                        
+                        # Return landmarks-corrected reactangles instead of MTCNN rectangle.
+                        # The rectangles are used to subsample faces for emotion recognition.
+                        predictions['rectangles'][-1] = r_
 
-            predictions['timing']['mtcnn'] = (time.time() - t_) * 1000
+                        (x, y, w, h) = r_
+                        face = np.zeros((h, w, 3), dtype=np.float)
+                        y_ = 0
+                        x_ = 0
+                        if y + h > img.shape[0]:
+                            h = img.shape[0] - y
+                        elif y < 0:
+                            y_ = -y
+                            y = 0
+                            h = h - y_
+                        if x + w > img.shape[1]:
+                            w = img.shape[1] - x
+                        elif x < 0:
+                            x_ = -x
+                            x = 0
+                            w = w - x_
+                        face[y_:y_+h, x_:x_+w, :] = img[y:y+h, x:x+w, :]
 
-            if len(landmarks):
-                landmarks = np.array(landmarks) * scale_factor
+                        face = cv2.resize(face, (48, 48), interpolation = interp)
+                        face = (face[:, :, 0:1] * 0.2126 + face[:, :, 1:2] * 0.7152 + face[:, :, 2:3] * 0.0722).reshape((48, 48))
+                        #face_write = (face * 255.).astype(np.uint8)
+                        #cv2.imwrite('./face'+str(i).zfill(3)+'.jpg', face_write)
+                        facelist[i:i+1, :, :] = face
+                        predictions['timing']['emoc_prepare'] += (time.time() - t_) * 1000
+                    elif model=='fnet':
+                        aligned = FaceApplications.align_face_fnet(img, landmarks[i])
+                        aligned_face_list[i, :, :, :] = aligned
+                        #print('aligned', aligned.shape)
+                    
+                    if e[0] <= 0 or e[1] <= 0 or e[2] >= img.shape[1]-1 or e[3] >= img.shape[0]-1:
+                        sorting_index[i] = 0
+                    else:
+                        sorting_index[i] = e[4] * r_[2] * r_[3]
+                
+                predictions['sort_index'] = sorting_index
 
-            if model=='a-emoc':
-                facelist = np.zeros((len(extents), 48, 48), dtype=np.float)
-                predictions['timing']['emoc_prepare'] = 0
-            elif model=='fnet':
-                aligned_face_list = np.zeros((len(extents), 160, 160, 3), dtype=np.float)
-                pass
-            
-            #print()
-            #print(extents)
-            sorting_index = {}
-            for i, e in enumerate(extents):
-                #e_ = (Rectangle(r_[0], r_[1], r_[2], r_[3]).to_extent().eval() * scale_factor).astype(dtype=np.int).tolist()
-                r_ = (np.array([e[0], e[1], e[2]-e[0], e[3]-e[1]])*scale_factor).astype(dtype=np.int).tolist()
-                #print('extents', i, e, r_)
-                predictions['rectangles'].append(r_)
-                predictions['confidences'].append(e[4])
-                plist_ = landmarks[i].astype(dtype=np.int).tolist()
-                predictions['landmarks'].append(plist_)
+                # Sort faces by sorting_index and select first N faces for computation intensive operations, e.g., facenet embedding extraction
+                better_faces = sorted(sorting_index, key=sorting_index.get, reverse=True)
+                better_faces = better_faces[0:FACE_RECOGNITION_CONCURRENT]
+                #print('sort', sorting_index, better_faces)
+                better_aligned_face_list = np.zeros((len(better_faces), 160, 160, 3), dtype=np.float)
+                better_rectangles = []
+                for better_face_index in range(len(better_faces)):
+                    better_aligned_face_list[better_face_index, :, :, :] = aligned_face_list[better_faces[better_face_index], :, :, :]
+                    better_rectangles.append(predictions['rectangles'][better_face_index])
+
                 if model=='a-emoc':
                     t_ = time.time()
-                    #(x, y, w, h) = imutil.rect_fit_ar(r_, [0, 0, img.shape[1], img.shape[0]], 1., crop=False)
-                    (x, y, w, h) = imutil.rect_fit_points(landmarks[i], )
-                    r_ = np.array([x, y, w, h]).astype(dtype=np.int).tolist()
-                    
-                    # Return landmarks-corrected reactangles instead of MTCNN rectangle.
-                    # The rectangles are used to subsample faces for emotion recognition.
-                    predictions['rectangles'][-1] = r_
-
-                    (x, y, w, h) = r_
-                    face = np.zeros((h, w, 3), dtype=np.float)
-                    y_ = 0
-                    x_ = 0
-                    if y + h > img.shape[0]:
-                        h = img.shape[0] - y
-                    elif y < 0:
-                        y_ = -y
-                        y = 0
-                        h = h - y_
-                    if x + w > img.shape[1]:
-                        w = img.shape[1] - x
-                    elif x < 0:
-                        x_ = -x
-                        x = 0
-                        w = w - x_
-                    face[y_:y_+h, x_:x_+w, :] = img[y:y+h, x:x+w, :]
-
-                    face = cv2.resize(face, (48, 48), interpolation = interp)
-                    face = (face[:, :, 0:1] * 0.2126 + face[:, :, 1:2] * 0.7152 + face[:, :, 2:3] * 0.0722).reshape((48, 48))
-                    #face_write = (face * 255.).astype(np.uint8)
-                    #cv2.imwrite('./face'+str(i).zfill(3)+'.jpg', face_write)
-                    facelist[i:i+1, :, :] = face
-                    predictions['timing']['emoc_prepare'] += (time.time() - t_) * 1000
+                    emoc_ = FaceApplications().get_emotion_classifier_create()
+                    emotions = emoc_.predict(facelist)
+                    predictions['emotions'] = emotions
+                    predictions['timing']['emoc'] = (time.time() - t_) * 1000
                 elif model=='fnet':
-                    aligned = FaceApplications.align_face_fnet(img, landmarks[i])
-                    aligned_face_list[i, :, :, :] = aligned
-                    #print('aligned', aligned.shape)
-                
-                if e[0] <= 0 or e[1] <= 0 or e[2] >= img.shape[1]-1 or e[3] >= img.shape[0]-1:
-                    sorting_index[i] = 0
-                else:
-                    sorting_index[i] = e[4] * r_[2] * r_[3]
-            
-            predictions['sort_index'] = sorting_index
+                    #print('aligned_face_list', aligned_face_list.shape)
+                    t_ = time.time()
+                    facenet_ = FaceApplications().get_facenet_create()
+                    #with facenet_.as_default():
+                    if True:
+                        """images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
+                        embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
+                        phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+                        feed_dict = { images_placeholder: better_aligned_face_list, phase_train_placeholder: False }
+                        emb = facenet_.run(embeddings, feed_dict=feed_dict)"""
+                        emb = facenet_(better_aligned_face_list)
+                        #predictions['embeddings'] = np.concatenate((predictions['embeddings'], emb))
+                        predictions['recognition']['index'] = better_faces
+                        predictions['recognition']['rectangles'] = predictions['recognition']['rectangles'] + better_rectangles
+                        predictions['recognition']['embeddings'] = predictions['recognition']['embeddings'] + emb.tolist()
+                        predictions['recognition']['images'] = predictions['recognition']['images'] + better_aligned_face_list.tolist()
+                    predictions['recognition']['mode'] = mode
+                    t_ = time.time() - t_
+                    #print('facenet forward', emb.shape, t_*1000)
+                    #print()
 
-            # Sort faces by sorting_index and select first N faces for computation intensive operations, e.g., facenet embedding extraction
-            better_faces = sorted(sorting_index, key=sorting_index.get, reverse=True)
-            better_faces = better_faces[0:FACE_RECOGNITION_CONCURRENT]
-            #print('sort', sorting_index, better_faces)
-            better_aligned_face_list = np.zeros((len(better_faces), 160, 160, 3), dtype=np.float)
-            better_rectangles = []
-            for better_face_index in range(len(better_faces)):
-                better_aligned_face_list[better_face_index, :, :, :] = aligned_face_list[better_faces[better_face_index], :, :, :]
-                better_rectangles.append(predictions['rectangles'][better_face_index])
+            else:
+                # Nothing is requested; useful for measuring overhead
+                pass
 
-            if model=='a-emoc':
-                t_ = time.time()
-                emoc_ = FaceApplications().get_emotion_classifier_create()
-                emotions = emoc_.predict(facelist)
-                predictions['emotions'] = emotions
-                predictions['timing']['emoc'] = (time.time() - t_) * 1000
-            elif model=='fnet':
-                #print('aligned_face_list', aligned_face_list.shape)
-                t_ = time.time()
-                facenet_ = FaceApplications().get_facenet_create()
-                #with facenet_.as_default():
-                if True:
-                    """images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-                    embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-                    phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-                    feed_dict = { images_placeholder: better_aligned_face_list, phase_train_placeholder: False }
-                    emb = facenet_.run(embeddings, feed_dict=feed_dict)"""
-                    emb = facenet_(better_aligned_face_list)
-                    #predictions['embeddings'] = np.concatenate((predictions['embeddings'], emb))
-                    predictions['recognition']['index'] = better_faces
-                    predictions['recognition']['rectangles'] = predictions['recognition']['rectangles'] + better_rectangles
-                    predictions['recognition']['embeddings'] = predictions['recognition']['embeddings'] + emb.tolist()
-                    predictions['recognition']['images'] = predictions['recognition']['images'] + better_aligned_face_list.tolist()
-                predictions['recognition']['mode'] = mode
-                t_ = time.time() - t_
-                #print('facenet forward', emb.shape, t_*1000)
-                #print()
-
-        else:
-            # Nothing is requested; useful for measuring overhead
-            pass
+        except:
+            self._on_crash()
 
         return predictions
 
