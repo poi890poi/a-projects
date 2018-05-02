@@ -19,6 +19,102 @@ AGENT_ID = 'Lee.Lin'
 SERVICE_ENDPOINT = 'http://192.168.41.41:9000/predict'
 #SERVICE_ENDPOINT = 'http://10.129.11.4:9000/predict'
 
+name_table = {
+    'd747': 'Natalie Portman',
+    '05c1': 'Dana Carvey',
+    'd364': 'Emma Watson',
+    'e36e': 'Emma Watson',
+    '3283': 'Taylor Swift',
+    'ed29': "Conan O'Brien",
+    '8fa8': 'Harrison Ford',
+    '': 'Harrison Ford',
+    '': 'Harrison Ford',
+    '6396': 'Graham Norton',
+    '95a7': 'Graham Norton',
+    '': 'Graham Norton',
+    'd77e': 'Reese Witherspoon',
+    '00f2': 'Reese Witherspoon',
+    '2747': 'Reese Witherspoon',
+    '': 'Reese Witherspoon',
+    '': 'Reese Witherspoon',
+    '': 'Reese Witherspoon',
+    '4695': 'Ryan Gosling',
+    '': 'Ryan Gosling',
+    '75a2': "no one",
+    'fc1d': "no one",
+    'fb30': 'Margot Robbie',
+    'b1fe': 'Margot Robbie',
+    '': 'Margot Robbie',
+    'c274': 'Nicole Kidman',
+    '676d': 'Simon Pegg',
+    '0b83': 'Simon Pegg',
+    '24ab': 'Simon Pegg',
+    '7b2c': 'Tom Cruise',
+    'bdb2': 'Tom Cruise',
+    '718a': 'Rebecca Ferguson',
+    'e2ed': 'Rebecca Ferguson',
+    '065a': 'Rebecca Ferguson',
+    '46d8': 'Rebecca Ferguson',
+    '3384': 'Henry Cavill',
+    'c22a': 'Matt LeBlanc',
+    'f2ff': 'Matt LeBlanc',
+    '7271': 'Maxine Peake',
+    '6578': 'Benedict Cumberbatch',
+    '372f': 'Matt Damon',
+    'cf2e': 'Mark Wahlberg',
+    '03dd': 'Shailene Woodley',
+}
+tests = {
+    'cn01': {
+        'video': '../../data/youtube_clips/conan/d_carvey_01.mp4',
+    },
+    'cn02': {
+        'video': '../../data/youtube_clips/conan/j_daniels_01.mp4',
+    },
+    'cn03': {
+        'video': '../../data/youtube_clips/conan/j_manganiello_01.mp4',
+    },
+    'cn04': {
+        'video': '../../data/youtube_clips/conan/m_akerman_01.mp4',
+    },
+    'cn05': {
+        'video': '../../data/youtube_clips/conan/n_leggero_01.mp4',
+    },
+    'np01': {
+        'video': '../../data/youtube_clips/n_portman_01.mp4',
+    },
+    'ew01': {
+        'video': '../../data/youtube_clips/e_watson_01.mp4',
+    },
+    'ts01': {
+        'video': '../../data/youtube_clips/graham/t_swift_01.mp4',
+    },
+    'hf01': {
+        'video': '../../data/youtube_clips/graham/h_ford_01.mp4',
+    },
+    'hf02': {
+        'video': '../../data/youtube_clips/graham/h_ford_02.mp4',
+    },
+    'tc01': {
+        'video': '../../data/youtube_clips/graham/t_cruise_01.mp4',
+    },
+    'tc02': {
+        'video': '../../data/youtube_clips/graham/t_cruise_02.mp4',
+    },
+    'bc01': {
+        'video': '../../data/youtube_clips/graham/b_cumberbatch_01.mp4',
+    },
+    'md01': {
+        'video': '../../data/youtube_clips/m_damon_01.mp4',
+    },
+    'mw01': {
+        'video': '../../data/youtube_clips/m_wahlberg_01.mp4',
+    },
+    'mw02': {
+        'video': '../../data/youtube_clips/m_wahlberg_02.mp4',
+    },
+}
+
 in_queue = Queue(maxsize=1)
 out_queue = Queue(maxsize=8)
 
@@ -84,102 +180,6 @@ def time_string(input):
     return '{}:{}:{}.{}'.format(hours, minutes, seconds, milliseconds)
 
 def main(args):
-    name_table = {
-        'd747': 'Natalie Portman',
-        '05c1': 'Dana Carvey',
-        'd364': 'Emma Watson',
-        'e36e': 'Emma Watson',
-        '3283': 'Taylor Swift',
-        'ed29': "Conan O'Brien",
-        '3e97': 'Harrison Ford',
-        '9479': 'Harrison Ford',
-        '6561': 'Harrison Ford',
-        '52cc': 'Graham Norton',
-        '69d3': 'Graham Norton',
-        '7530': 'Graham Norton',
-        '50ef': 'Reese Witherspoon',
-        '0705': 'Reese Witherspoon',
-        '3035': 'Reese Witherspoon',
-        'f49c': 'Reese Witherspoon',
-        'a579': 'Reese Witherspoon',
-        'd734': 'Reese Witherspoon',
-        '444a': 'Ryan Gosling',
-        'b96c': 'Ryan Gosling',
-        '2eaf': "no one",
-        'c530': "no one",
-        '1ff2': 'Margot Robbie',
-        'b275': 'Margot Robbie',
-        'e09a': 'Margot Robbie',
-        'd7fc': 'Nicole Kidman',
-        '676d': 'Simon Pegg',
-        '0b83': 'Simon Pegg',
-        '24ab': 'Simon Pegg',
-        '7b2c': 'Tom Cruise',
-        'bdb2': 'Tom Cruise',
-        '718a': 'Rebecca Ferguson',
-        'e2ed': 'Rebecca Ferguson',
-        '065a': 'Rebecca Ferguson',
-        '46d8': 'Rebecca Ferguson',
-        '3384': 'Henry Cavill',
-        'c22a': 'Matt LeBlanc',
-        'f2ff': 'Matt LeBlanc',
-        '7271': 'Maxine Peake',
-        '6578': 'Benedict Cumberbatch',
-        '372f': 'Matt Damon',
-        'cf2e': 'Mark Wahlberg',
-        '35ff': 'Shailene Woodley',
-    }
-    tests = {
-        'cn01': {
-            'video': '../../data/youtube_clips/conan/d_carvey_01.mp4',
-        },
-        'cn02': {
-            'video': '../../data/youtube_clips/conan/j_daniels_01.mp4',
-        },
-        'cn03': {
-            'video': '../../data/youtube_clips/conan/j_manganiello_01.mp4',
-        },
-        'cn04': {
-            'video': '../../data/youtube_clips/conan/m_akerman_01.mp4',
-        },
-        'cn05': {
-            'video': '../../data/youtube_clips/conan/n_leggero_01.mp4',
-        },
-        'np01': {
-            'video': '../../data/youtube_clips/n_portman_01.mp4',
-        },
-        'ew01': {
-            'video': '../../data/youtube_clips/e_watson_01.mp4',
-        },
-        'ts01': {
-            'video': '../../data/youtube_clips/graham/t_swift_01.mp4',
-        },
-        'hf01': {
-            'video': '../../data/youtube_clips/graham/h_ford_01.mp4',
-        },
-        'hf02': {
-            'video': '../../data/youtube_clips/graham/h_ford_02.mp4',
-        },
-        'tc01': {
-            'video': '../../data/youtube_clips/graham/t_cruise_01.mp4',
-        },
-        'tc02': {
-            'video': '../../data/youtube_clips/graham/t_cruise_02.mp4',
-        },
-        'bc01': {
-            'video': '../../data/youtube_clips/graham/b_cumberbatch_01.mp4',
-        },
-        'md01': {
-            'video': '../../data/youtube_clips/m_damon_01.mp4',
-        },
-        'mw01': {
-            'video': '../../data/youtube_clips/m_wahlberg_01.mp4',
-        },
-        'mw02': {
-            'video': '../../data/youtube_clips/m_wahlberg_02.mp4',
-        },
-    }
-
     # Initialize video capture object
     is_live = False
     if args.vfile:
@@ -208,7 +208,7 @@ def main(args):
 
     last_response = None
     mode = ''
-    t_register_expiration = 0
+    t_register_cooldown = 0
     cd_play_ctrl = 0
     is_paused = False
 
@@ -219,7 +219,9 @@ def main(args):
     skip = False
 
     while(True):
+        print()
         if skip:
+            print('SKIP')
             cap.grab()
 
         else:
@@ -235,6 +237,7 @@ def main(args):
 
             if frame is None:
                 continue
+
             t_frame = time.time() * 1000
 
             # Our operations on the frame come here
@@ -283,24 +286,23 @@ def main(args):
                     # in_queue is full
                     pass
                 else:
-                    print()
                     in_queue.put_nowait(requests)
                     #print('qsize', in_queue.qsize())
 
                 f_ = 0
                 t_ = time.time() + interval
 
-            try:
-                last_response = out_queue.get_nowait()
-                t_now = time.time() * 1000
-                latency = t_now - last_response['agent']['t_frame']
-                if latency > 1200:
-                    # Result out-dated
-                    last_response = None
-                    print('SKIP RESULT')
-                print('frame to display()', latency)
-            except Empty:
-                pass
+        try:
+            last_response = out_queue.get_nowait()
+            t_now = time.time() * 1000
+            latency = t_now - last_response['agent']['t_frame']
+            if latency > 1200:
+                # Result out-dated
+                last_response = None
+                print('SKIP RESULT')
+            print('NEW RESPONSE', latency)
+        except Empty:
+            pass
 
         if last_response:
             #print(len(t.response['responses'][0]['services'][0]['results']['rectangles']))
@@ -339,9 +341,6 @@ def main(args):
             cv2.putText(frame, line, (10, y_), font, 0.7, (0, 255, 0), 1, cv2.LINE_AA)
             y_ += 36
 
-        if time.time() > t_register_expiration:
-            mode = ''
-
         # Display the resulting frame
         cv2.imshow('frame', frame)
 
@@ -365,8 +364,12 @@ def main(args):
             print('EXIT')
             break
         elif key==ord('r'):
-            mode = 'register'
-            t_register_expiration = time.time() + 0.5
+            if time.time() > t_register_cooldown:
+                if mode=='register':
+                    mode = ''
+                else:
+                    mode = 'register'
+            t_register_cooldown = time.time() + 0.25
         elif key==ord('.'): # Forward jump
             for i in range(25*30):
                 cap.grab()

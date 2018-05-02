@@ -614,32 +614,42 @@ class FaceDetectionThread(ThreadBase):
                         if 'rectangles' in predictions and len(predictions['rectangles']) and 'predictions' in agstate and len(agstate['predictions']['rectangles']):
                             mapping = self.get_rect_mapping(predictions['rectangles'], agstate['predictions']['rectangles'], LAZY_IOU)
 
+                    """
+                    Lazy detection (and recognition) mechanism use a conservative strategy that...
+                    1. To validate previous detection, all faces in previous frame must be succesfully tracked in current frame.
+                    2. Tracking in rule 1 means that 2 face rectangles in consecutive frames have IOU < LAZY_IOU
+                    3. To validate previous recognition, there must be at least one recognized identity for the faces being tracked.
+                    """
+
                     if mapping is not None:
                         # Lazy detection with ROIs
-                        debug('ROI detection')
+                        debug('ROI detection, recognition data: {}'.format(('recognition' in predictions)))
                         lazy_level = LAZY_USE_ROI
                         if not is_registering: self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
-                        
+                        if 'identities' in predictions: debug('check_lazy_recognition {}'.format(predictions['identities']))
                     else:
                         # Full frame detection
                         predictions = self.detect(task.img, task.params)
-                        debug('Full frame detection')
+                        debug('Full frame detection, recognition data: {}'.format(('recognition' in predictions)))
 
                     # Check if there's any recognized identity; recognition will be performed regardlessly if there's no recognized identity
                     any_recognized = False
                     if 'identities' in predictions:
-                        for c in predictions['identities']['confidence']:
-                            if c > 0:
-                                any_recognized = True
-                                break
+                        if np.amax(predictions['identities']['confidence']) > 0:
+                            any_recognized = True
+
                         if any_recognized:
-                            for i, c in enumerate(predictions['identities']['confidence']):
-                                predictions['identities']['confidence'][i] = min(0.1, c)
+                            pass
+                        else:
+                            # Discard previous recognition results if no face is identified
+                            predictions.pop('identities', None)
+                            debug('There is not any recognized identity, recognition data: {}'.format(('recognition' in predictions)))
 
                     # Registration always use up-to-date recognition results to prevent mixing of face from different identities
-                    if 'identities' not in predictions or not any_recognized:
+                    if 'identities' not in predictions:
+                        self.extract_face_embedding(predictions)
                         if 'recognition' in predictions and len(predictions['recognition']['rectangles']):
-                            debug('Perform recognition {}'.format(len(predictions['recognition']['embeddings'])))
+                            debug('Perform embedding matching {}'.format(len(predictions['recognition']['embeddings'])))
                             #print('embeddings', predictions['embeddings'])
                             names_, confidences_ = FaceApplications().query_embedding(task.params['agent']['agentId'], predictions['recognition']['embeddings'])
 
@@ -664,7 +674,10 @@ class FaceDetectionThread(ThreadBase):
                             }
 
                         else:
-                            debug('NO DATA FOR RECOGNITION')
+                            if 'recognition' in predictions:
+                                debug('NO RECTANGLE FOR RECOGNITION')
+                            else:
+                                debug('NO RECOGNITION DATA')
 
                         is_fresh_results = True
 
@@ -683,6 +696,18 @@ class FaceDetectionThread(ThreadBase):
                 self._on_crash()
 
     def get_rect_mapping(self, rlist1, rlist2, threshold):
+        """
+        This function maps 2 lists of rectangles (as in 2 consecutive video frames) with their IOU to find tracked rectangles.
+        
+        Arguments:
+            rlist1 {List} -- List of rectangles (x, y, w, h)
+            rlist2 {List} -- List of rectangles (x, y, w, h)
+            threshold {float} -- IOU of 2 rectangles must be higher than this to be considered being successfully tracked
+        
+        Returns:
+            List -- List of pairs of index for tracked rectangles
+        """
+
         #debug('get_rect_mapping, {}, {}'.format(rlist1, rlist2))
         len_frame_now = len(rlist1)
         len_frame_last = len(rlist2)
@@ -718,6 +743,7 @@ class FaceDetectionThread(ThreadBase):
         return None
 
     def check_lazy_recognition(self, t_now, task, agstate, predictions, mapping):
+        # Use previous face recognition results
         if agstate is not None and mapping is not None:
             if 'identities' in agstate['predictions']:
                 t_recognition = agstate['t_recognition']
@@ -745,9 +771,6 @@ class FaceDetectionThread(ThreadBase):
                         'name': name,
                         'confidence': confidence,
                     }
-                    if 'recognition' in predictions:
-                        # Remove 'recognition' in predictions to skip face recognition computation
-                        predictions.pop('recognition', None)
                     #debug('Use lazy recognition, {}'.format(predictions['identities']))
 
             return True
@@ -976,26 +999,16 @@ class FaceDetectionThread(ThreadBase):
                     emotions = emoc_.predict(facelist)
                     predictions['emotions'] = emotions
                     predictions['timing']['emoc'] = (time.time() - t_) * 1000
+                    
                 elif model=='fnet':
-                    #print('aligned_face_list', aligned_face_list.shape)
-                    t_ = time.time()
-                    facenet_ = FaceApplications().get_facenet_create()
-                    #with facenet_.as_default():
-                    if True:
-                        """images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-                        embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-                        phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-                        feed_dict = { images_placeholder: better_aligned_face_list, phase_train_placeholder: False }
-                        emb = facenet_.run(embeddings, feed_dict=feed_dict)"""
-                        emb = facenet_(better_aligned_face_list)
-                        #predictions['embeddings'] = np.concatenate((predictions['embeddings'], emb))
-                        predictions['recognition']['index'] = better_faces
-                        predictions['recognition']['rectangles'] = predictions['recognition']['rectangles'] + better_rectangles
-                        predictions['recognition']['embeddings'] = predictions['recognition']['embeddings'] + emb.tolist()
-                        predictions['recognition']['images'] = predictions['recognition']['images'] + better_aligned_face_list.tolist()
+                    # Prepare information for extracting face embedding but don't perform facenet forwarding yet
+                    predictions['recognition']['prepare'] = {
+                        'better_aligned_face_list': copy.deepcopy(better_aligned_face_list),
+                        'better_faces': copy.deepcopy(better_faces),
+                        'better_rectangles': copy.deepcopy(better_rectangles),
+                    }
+
                     predictions['recognition']['mode'] = mode
-                    t_ = time.time() - t_
-                    #print('facenet forward', emb.shape, t_*1000)
                     #print()
 
             else:
@@ -1006,6 +1019,29 @@ class FaceDetectionThread(ThreadBase):
             self._on_crash()
 
         return predictions
+
+    def extract_face_embedding(self, predictions):
+        if 'recognition' in predictions and 'prepare' in predictions['recognition']:
+            t_ = time.time()
+
+            facenet_ = FaceApplications().get_facenet_create()
+
+            better_aligned_face_list = predictions['recognition']['prepare']['better_aligned_face_list']
+            better_rectangles = predictions['recognition']['prepare']['better_rectangles']
+            better_faces = predictions['recognition']['prepare']['better_faces']
+
+            # Perform facenet forwarding to extract face embedding
+            emb = facenet_(better_aligned_face_list)
+
+            predictions['recognition']['index'] = better_faces
+            predictions['recognition']['rectangles'] = predictions['recognition']['rectangles'] + better_rectangles
+            predictions['recognition']['embeddings'] = predictions['recognition']['embeddings'] + emb.tolist()
+            predictions['recognition']['images'] = predictions['recognition']['images'] + better_aligned_face_list.tolist()
+
+            predictions['recognition'].pop('prepare', None)
+
+            t_ = time.time() - t_
+            debug('Perform embedding extracting, emb: {}, dt: {}'.format(emb.shape, t_*1000))
 
     def align_dataset(self, directory=None):
         if directory is None:
@@ -1259,9 +1295,10 @@ class FaceApplications(VisionMainThread):
         if 'identities' in predictions:
             agstate['t_recognition'] = t_detection
             agstate['identities'] = predictions['identities']
-        """else:
-            agstate['t_recognition'] = 0
-            agstate['predictions'].pop('identities', None)"""
+
+            # All previous results have confidence of 0.1 to be easily seen by clients as unreliable results
+            for i, c in enumerate(agstate['identities']['confidence']):
+                agstate['identities']['confidence'][i] = min(0.1, c)
 
     @staticmethod
     def align_face_fnet(img, landmarks):
