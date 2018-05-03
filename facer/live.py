@@ -16,8 +16,11 @@ from queue import Queue, Empty
 import threading
 
 AGENT_ID = 'Lee.Lin'
-SERVICE_ENDPOINT = 'http://192.168.41.41:9000/predict'
-#SERVICE_ENDPOINT = 'http://10.129.11.4:9000/predict'
+
+endpoints = {
+    'local': 'http://192.168.41.41:9000/predict',
+    'azure': 'http://10.129.11.4:9000/predict',
+}
 
 name_table = {
     'd747': 'Natalie Portman',
@@ -145,7 +148,7 @@ class ThreadUrl(threading.Thread):
                 postdata = json.dumps(task)
                 try:
                     #self.response = None
-                    url = SERVICE_ENDPOINT
+                    url = task['endpoint']
                     r = http.request('POST', url, body=postdata.encode())
                     if r.status==200:
                         response = json.loads(r.data.decode())
@@ -191,6 +194,11 @@ def main(args):
     else:
         cap = cv2.VideoCapture(0)
         is_live = True
+
+    endpoint_name = 'local'
+    if args.endpoint:
+        endpoint_name = args.endpoint
+    SERVICE_ENDPOINT = endpoints[endpoint_name]
 
     interval = 1./25.
     t_ = time.time() + interval
@@ -279,7 +287,8 @@ def main(args):
                     'timing': {
                         'client_sent': time.time() * 1000,
                         't_expiration': (time.time() + 0.25) * 1000,
-                    }
+                    },
+                    'endpoint': SERVICE_ENDPOINT,
                 }
 
                 if in_queue.full():
@@ -401,6 +410,12 @@ if __name__== "__main__":
         type=str,
         default='',
         help='Name of test preset.'
+    )
+    parser.add_argument(
+        '--endpoint',
+        type=str,
+        default='local',
+        help='Name of service endpoint (server).'
     )
     ARGS, unknown = parser.parse_known_args()
     if unknown:
