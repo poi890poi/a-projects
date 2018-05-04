@@ -41,6 +41,7 @@ FACE_EMBEDDING_THRESHOLD_LOW = 0.321875 # Very high precision 99.10%. This is us
 # (additional FACE_EMBEDDING_SAMPLE_SIZE will be added later for increase accuracy and keeps record up to date)
 FACE_EMBEDDING_SAMPLE_SIZE = 4
 
+THREAD_COUNT = 3
 FACE_RECOGNITION_CONCURRENT = 2
 FACE_RECOGNITION_REMEMBER = 32
 FACE_RECOGNITION_DIR = '../models/face_registered'
@@ -53,6 +54,8 @@ RUN_MODE_DEBUG = True
 # of consecutive frame is within the constants defined here (in seconds)
 LAZY_INTERVAL_SKIP = 125.
 LAZY_INTERVAL_ROI = 500.
+LAZY_INTERVAL_RECOGNITION = 6000.
+LAZY_CONFIDENCE_DECAY = 0.9
 LAZY_IOU = 0.4
 LAZY_USE_NONE = 0 # Perform everything as normal
 LAZY_USE_SKIP = 1 # Skip everything because 2 consecutive frames have interval T < LAZY_INTERVAL_SKIP
@@ -415,6 +418,7 @@ class FaceEmbeddingThread(ThreadBase):
 
                     embeddings = sklearn.preprocessing.normalize(task.embeddings['recognition']['embeddings'])
                     names = task.embeddings['names']
+                    confidences = task.embeddings['confidences']
                     face_images = task.embeddings['recognition']['images']
                     rectangles = task.embeddings['recognition']['rectangles']
                     is_registering = False
@@ -433,14 +437,16 @@ class FaceEmbeddingThread(ThreadBase):
                             candidate['embeddings'] = []
                             candidate['face_images'] = []
                             candidate['rectangles'] = []
+                            agent.t_update_face_tree = t_now + INTERVAL_FACE_REGISTER
                     agent.is_registering = is_registering
 
                     for emb_i, emb in enumerate(embeddings):
-                        if names[emb_i]:
+                        if names[emb_i] and confidences[emb_i]>(1-FACE_EMBEDDING_THRESHOLD_LOW): # Threshold checking is addded to prevent mixing faces from different identities
                             # The face is found in registered faces; append to the existing cluster
                             index = agent.names_to_index[names[emb_i]]
                             #print('registered faces', names[emb_i], len(agent.face_names_cluster), len(self.face_embeddings_cluster), len(self.face_images_cluster))
                             agent.append_cluster(index, emb, face_images[emb_i])
+                            debug('Append latest face embeddings, n: {}, c: {}'.format(names[emb_i], confidences[emb_i]))
                         else:
                             # The face is unknown
                             if is_registering:
@@ -621,11 +627,13 @@ class FaceDetectionThread(ThreadBase):
                     3. To validate previous recognition, there must be at least one recognized identity for the faces being tracked.
                     """
 
+                    is_all_recognized_tracked = False
                     if mapping is not None:
                         # Lazy detection with ROIs
                         debug('ROI detection, recognition data: {}'.format(('recognition' in predictions)))
                         lazy_level = LAZY_USE_ROI
-                        if not is_registering: self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
+                        if not is_registering and t_delay < LAZY_INTERVAL_RECOGNITION:
+                            is_all_recognized_tracked = self.check_lazy_recognition(t_now, task, agstate, predictions, mapping)
                         if 'identities' in predictions: debug('check_lazy_recognition {}'.format(predictions['identities']))
                     else:
                         # Full frame detection
@@ -633,17 +641,10 @@ class FaceDetectionThread(ThreadBase):
                         debug('Full frame detection, recognition data: {}'.format(('recognition' in predictions)))
 
                     # Check if there's any recognized identity; recognition will be performed regardlessly if there's no recognized identity
-                    any_recognized = False
                     if 'identities' in predictions:
-                        if np.amax(predictions['identities']['confidence']) > 0:
-                            any_recognized = True
-
-                        if any_recognized:
-                            pass
-                        else:
-                            # Discard previous recognition results if no face is identified
+                        if np.amax(predictions['identities']['confidence']) <= 0.1:
+                            # Discard previous recognition results if confidence too low
                             predictions.pop('identities', None)
-                            debug('There is not any recognized identity, recognition data: {}'.format(('recognition' in predictions)))
 
                     # Registration always use up-to-date recognition results to prevent mixing of face from different identities
                     if 'identities' not in predictions:
@@ -755,9 +756,10 @@ class FaceDetectionThread(ThreadBase):
                 for i in range(len(predictions['rectangles'])):
                     if mapping[i] < len(agstate['predictions']['identities']['name']):
                         name.append(agstate['predictions']['identities']['name'][mapping[i]])
-                        confidence.append(agstate['predictions']['identities']['confidence'][mapping[i]])
+                        confidence.append(agstate['predictions']['identities']['confidence'][mapping[i]] * LAZY_CONFIDENCE_DECAY)
                     else:
                         debug('A face in previous frame is missing')
+                        # Return False to indicate that not all recognized faces in previous frame are tracked successfully
                         return False
 
                 if 'identities' in predictions:
@@ -773,7 +775,7 @@ class FaceDetectionThread(ThreadBase):
                     }
                     #debug('Use lazy recognition, {}'.format(predictions['identities']))
 
-            return True
+                return True
 
         return False
 
@@ -1140,7 +1142,7 @@ class FaceApplications(VisionMainThread):
         self.face_tree = {}
         self.face_names_flatten = {}
 
-        for i in range(2): # Spawn 2 threads
+        for i in range(THREAD_COUNT): # Spawn THREAD_COUNT threads
             t = FaceDetectionThread(self.in_queue)
             t.setDaemon(True)
             self.core_threads.append(t)
@@ -1301,12 +1303,10 @@ class FaceApplications(VisionMainThread):
         agstate['t_detection'] = t_detection
         agstate['predictions'] = predictions
         if 'identities' in predictions:
-            agstate['t_recognition'] = t_detection
             agstate['identities'] = predictions['identities']
-
-            # All previous results have confidence of 0.1 to be easily seen by clients as unreliable results
-            for i, c in enumerate(agstate['identities']['confidence']):
-                agstate['identities']['confidence'][i] = min(0.1, c)
+            if np.amax(predictions['identities']['confidence']) > 0.4:
+                # Fresh recognition results must have confidence > 0.4
+                agstate['t_recognition'] = t_detection
 
     @staticmethod
     def align_face_fnet(img, landmarks):
