@@ -920,10 +920,10 @@ class FaceDetectionThread(ThreadBase):
                     landmarks = np.array(landmarks) * scale_factor
 
                 if model=='a-emoc':
-                    facelist = np.zeros((len(extents), 48, 48), dtype=np.float)
+                    facelist = np.zeros((len(extents), 48, 48), dtype=np.float32)
                     predictions['timing']['emoc_prepare'] = 0
                 elif model=='fnet':
-                    aligned_face_list = np.zeros((len(extents), 160, 160, 3), dtype=np.float)
+                    aligned_face_list = np.zeros((len(extents), 160, 160, 3), dtype=np.float32)
                     pass
                 
                 #print()
@@ -948,7 +948,7 @@ class FaceDetectionThread(ThreadBase):
                         predictions['rectangles'][-1] = r_
 
                         (x, y, w, h) = r_
-                        face = np.zeros((h, w, 3), dtype=np.float)
+                        face = np.zeros((h, w, 3), dtype=np.float32)
                         y_ = 0
                         x_ = 0
                         if y + h > img.shape[0]:
@@ -987,7 +987,7 @@ class FaceDetectionThread(ThreadBase):
                 better_faces = sorted(sorting_index, key=sorting_index.get, reverse=True)
                 better_faces = better_faces[0:FACE_RECOGNITION_CONCURRENT]
                 #print('sort', sorting_index, better_faces)
-                better_aligned_face_list = np.zeros((len(better_faces), 160, 160, 3), dtype=np.float)
+                better_aligned_face_list = np.zeros((len(better_faces), 160, 160, 3), dtype=np.float32)
                 better_rectangles = []
                 for better_face_index in range(len(better_faces)):
                     better_aligned_face_list[better_face_index, :, :, :] = aligned_face_list[better_faces[better_face_index], :, :, :]
@@ -1060,7 +1060,7 @@ class FaceDetectionThread(ThreadBase):
 
             img = cv2.imread(f.path, 1)
             if img is None:break
-            img = (img.astype(dtype=np.float32))/255
+            img = (img.astype(dtype=np.float32)) / 255.
 
             detector = FaceApplications().get_detector_create()
             pnet = detector['pnet']

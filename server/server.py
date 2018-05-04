@@ -201,7 +201,7 @@ class PredictHandler(tornado.web.RequestHandler):
             raise(NotImplementedError)
             pass
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = (img.astype(np.float)) / 255.
+        img = (img.astype(np.float32)) / 255.
         return img
 
     def get(self):
