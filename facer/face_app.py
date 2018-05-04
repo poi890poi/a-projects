@@ -849,26 +849,34 @@ class FaceDetectionThread(ThreadBase):
                 rnet = detector['rnet']
                 onet = detector['onet']
 
-                if 'lazy' in params:
+                if 'lazy' in params and len(params['lazy']['rectangles']):
                     # Lazy detection level 1 performs MTCNN detection only in area with previously detected faces
                     grouped_extents = np.empty((0, 5))
                     grouped_landmarks = np.empty((0, 5, 2))
+                    height, width, *_ = resized.shape
 
                     # Detect only area with previously detected faces within time interval T < LAZT_DETECTION
                     # Convert rectangles back to extents
                     extents = np.array(params['lazy']['rectangles'], dtype=np.float) / scale_factor
+                    extents.resize((extents.shape[0]+1, extents.shape[1])) # Resize for adding a central ROI later
+
+                    # Expand extents
+                    padding = 20
                     for i, e in enumerate(extents):
                         extents[i][2] += e[0]
                         extents[i][3] += e[1]
-
-                    # Expand extents
-                    height, width, *_ = resized.shape
-                    for i, e in enumerate(extents):
                         w = e[2] - e[0]
                         h = e[3] - e[1]
                         extents[i] += np.array((-w, -h, w, h), dtype=np.float)
                         e = extents[i]
-                        extents[i] = np.array((max(e[0], 0), max(e[1], 0), min(e[2], width-1), min(e[3], height-1)), dtype=np.float)
+
+                        # Limit extents in the range of pixel array
+                        extents[i] = np.array((max(e[0], padding), max(e[1], padding), min(e[2], width-padding), min(e[3], height-padding)), dtype=np.float)
+
+                    # Always detect central area of the pixel array
+                    qheight = height // 4
+                    qwidth = width // 4
+                    extents[-1] = np.array([qwidth, qheight, width-qwidth, height-qheight], dtype=np.float)
 
                     # Group overlapped extents
                     for iteration in range(16):
@@ -891,22 +899,22 @@ class FaceDetectionThread(ThreadBase):
                     predictions['timing']['prepare_roi'] = (time.time() - t_) * 1000
                     t_ = time.time()
                     for i, e in enumerate(extents):
+                        # For debugging...
+                        r_ = (np.array([e[0], e[1], e[2]-e[0], e[3]-e[1]])*scale_factor).astype(dtype=np.int).tolist()
+                        if 'roi' not in predictions: predictions['roi'] = []
+                        predictions['roi'].append(r_)
+
                         offset_ = np.array([e[0], e[1], e[0], e[1], 0])
-                        if e[2] > 0:
+                        if e[2] > 0: # Validate ROI must has width > 0
                             e = e.astype(dtype=np.int)
                             roi = resized[e[1]:e[3], e[0]:e[2], :]
                             _extents, _landmarks = FaceDetector.detect_face(roi, 40, pnet, rnet, onet, threshold=[0.6, 0.7, 0.9], factor=factor, interpolation=interp)
                             if len(_extents):
-                                #print('_extents', _extents.shape)
-                                #print('_landmarks', _landmarks.shape)
                                 _extents += offset_
                                 _landmarks += offset_[0:2]
-                                #print('shape of grouped', grouped_extents.shape, grouped_landmarks.shape)
                                 grouped_extents = np.concatenate((grouped_extents, _extents))
                                 grouped_landmarks = np.concatenate((grouped_landmarks, _landmarks))
-                                #print()
-                                #print(i, roi.shape)
-                                #print(_extents)
+
                     extents = grouped_extents
                     landmarks = grouped_landmarks
                 

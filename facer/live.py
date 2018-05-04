@@ -30,7 +30,7 @@ name_table = {
     '3283': 'Taylor Swift',
     'ed29': "Conan O'Brien",
     '8fa8': 'Harrison Ford',
-    '': 'Harrison Ford',
+    '1ebf': 'Harrison Ford',
     '': 'Harrison Ford',
     '6396': 'Graham Norton',
     '95a7': 'Graham Norton',
@@ -317,6 +317,9 @@ def main(args):
             #print(len(t.response['responses'][0]['services'][0]['results']['rectangles']))
             for r in last_response['responses']:
                 for service in r['services']:
+                    if 'roi' in service['results']:
+                        for i, r in enumerate(service['results']['roi']):
+                            cv2.rectangle(frame, (r[0], r[1]), (r[0]+r[2], r[1]+r[3]), (255, 0, 255))
                     for i, r in enumerate(service['results']['rectangles']):
                         cv2.rectangle(frame, (r[0], r[1]), (r[0]+r[2], r[1]+r[3]), (255, 255, 0))
                         if 'emotions' in service['results'] and len(service['results']['emotions']):
@@ -338,9 +341,14 @@ def main(args):
         else:
             print('No cached result')
 
-        pos = cap.get(cv2.CAP_PROP_POS_MSEC)
-        pos_str = time_string(pos)
+        if is_live:
+            pos = time.time()*1000 + 8*60*60*1000
+            pos_str = time_string(pos)
+        else:
+            pos = cap.get(cv2.CAP_PROP_POS_MSEC)
+            pos_str = time_string(pos)
         osd = [pos_str, repr(frame.shape)]
+
         if mode=='register':
             osd.append('REGISTERING NEW FACE...')
         if is_paused:
