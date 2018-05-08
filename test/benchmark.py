@@ -5,6 +5,15 @@ import timeit
 import cv2
 import jpeg4py as jpeg
 
+print('BytesIO write', timeit.timeit(
+stmt='''b.write(b"B")''',
+setup='''from io import BytesIO
+b = BytesIO()''', number=100)*50000000)
+
+print('bytes type concat', timeit.timeit(
+stmt='''b += b"B"''',
+setup='''b = b""''', number=100)*50000000)
+
 with open('sample.jpg', 'rb') as f:
     bindata = np.frombuffer(f.read(), np.uint8)
 

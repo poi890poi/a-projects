@@ -1,6 +1,8 @@
 import tornado.ioloop
 import tornado.web
 import tornado.template
+import tornado.httputil
+from tornado.httputil import HTTPHeaders, HTTPFile, _parse_header
 
 import time
 from uuid import uuid4
@@ -24,6 +26,61 @@ from queue import Queue, Empty
 
 from shared.utilities import NumpyEncoder
 from shared.alogger import *
+
+# The following codes are copied from tornado.httputil and modified to address an issue regarding parsing multipart/form-data
+def my_parse_multipart_form_data(boundary, data, arguments, files):
+    """Parses a ``multipart/form-data`` body.
+
+    The ``boundary`` and ``data`` parameters are both byte strings.
+    The dictionaries given in the arguments and files parameters
+    will be updated with the contents of the body.
+    """
+    # The standard allows for the boundary to be quoted in the header,
+    # although it's rare (it happens at least for google app engine
+    # xmpp).  I think we're also supposed to handle backslash-escapes
+    # here but I'll save that until we see a client that uses them
+    # in the wild.
+    if boundary.startswith(b'"') and boundary.endswith(b'"'):
+        boundary = boundary[1:-1]
+    final_boundary_index = data.rfind(b"--" + boundary + b"--")
+    if final_boundary_index == -1:
+        warning("Invalid multipart/form-data: no final boundary")
+        return
+    parts = data[:final_boundary_index].split(b"--" + boundary + b"\r\n")
+    for part in parts:
+        if not part:
+            continue
+        eoh = part.find(b"\r\n\r\n")
+        if eoh == -1:
+            warning("multipart/form-data missing headers")
+            continue
+        headers = HTTPHeaders.parse(part[:eoh].decode("utf-8"))
+        disp_header = headers.get("Content-Disposition", "")
+        disposition, disp_params = _parse_header(disp_header)
+        
+        if len(disp_header)==0:
+            # This is the part before first delimiter and in the original tornado.httputil it's validated for proper Content-Disposition,
+            # which is wrong
+            pass
+        else:
+            if len(disp_header) and disposition != "form-data" or not part.endswith(b"\r\n"):
+                warning("Invalid multipart/form-data")
+                continue
+            value = part[eoh + 4:-2]
+            if not disp_params.get("name"):
+                warning("multipart/form-data value missing name")
+                continue
+            name = disp_params["name"]
+            if disp_params.get("filename"):
+                ctype = headers.get("Content-Type", "application/unknown")
+                files.setdefault(name, []).append(HTTPFile(  # type: ignore
+                    filename=disp_params["filename"], body=value,
+                    content_type=ctype))
+            else:
+                arguments.setdefault(name, []).append(value)
+
+# Override tornado.httputil.parse_multipart_form_data() to address an issue regarding parsing multipart/form-data
+tornado.httputil.parse_multipart_form_data = my_parse_multipart_form_data
 
 class Singleton(type):
     _instances = {}
@@ -217,30 +274,31 @@ class PredictHandler(tornado.web.RequestHandler):
         requests = None
         img = None
 
-        print()
-        print()
-        print(self.request.headers)
-        print()
+        debug(self.request.headers)
 
-        if len(self.request.body_arguments):
+        ctype = self.request.headers.get('Content-Type', '')
+        if ctype.startswith('multipart/form-data'):
             # multipart/form-data
-            print('multipart/form-data')
             for name in self.request.body_arguments:
                 part = self.request.body_arguments[name][0]
-                print(name, part[0:32])
-                print()
+                #print(name, part[0:32])
                 if name=='requests':
                     requests = part
                 elif name=='media':
                     if len(part) > 2*1024*1024:
                         self.set_status(413)
-                        self.finish('Content of media too large')
+                        self.finish('Content of media in multipart too large')
                         return
                     img = self.__format_image(part)
                     if img is None:
                         self.set_status(415)
-                        self.finish("Unable to load media")
+                        self.finish("Unable to load media in multipart")
                         return
+            
+            if requests is None or img is None:
+                self.set_status(400)
+                self.finish('Invalid multipart/form-data')
+                return
 
         elif self.request.body:
             # Base64-encode media and store in JSON
@@ -248,15 +306,11 @@ class PredictHandler(tornado.web.RequestHandler):
 
         try:
             requests = requests.decode('utf-8')
-            print(requests)
         except ValueError:
             self.set_status(400)
             self.finish('Unable to decode as UTF-8')
             self.log_exception()
             return
-
-        print()
-        print()
 
         try:
             requests = json.loads(requests)
@@ -266,7 +320,7 @@ class PredictHandler(tornado.web.RequestHandler):
             self.log_exception()
             return
 
-        if requests is not None and img is not None:
+        if requests is not None:
             try:
                 if 'agent' in requests and 'debug' in requests['agent'] and requests['agent']['debug']:
                     original_request = copy.deepcopy(requests)

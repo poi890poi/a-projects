@@ -15,11 +15,11 @@ import argparse
 from queue import Queue, Empty
 import threading
 
-AGENT_ID = 'Lee.Lin-B64'
+AGENT_ID = 'Lee.Lin'
 
 endpoints = {
     'local': 'http://192.168.41.41:9000/predict',
-    'azure': 'http://10.129.11.4:9000/predict',
+    'azure': 'http://10.129.11.4/cgi/predict',
 }
 
 name_table = {
@@ -54,6 +54,7 @@ name_table = {
     '4e66': 'Margot Robbie',
     '5168': 'Margot Robbie',
     'd8e9': 'Margot Robbie',
+    'bc17': 'Margot Robbie',
     'c4e3': 'Nicole Kidman',
     'b795': 'Shailene Woodley',
     '676d': 'Simon Pegg',
@@ -157,31 +158,66 @@ class ThreadUrl(threading.Thread):
             task = self.in_queue.get()
 
             t_now = time.time() * 1000
-            task['timing']['client_sent'] = t_now
+            requests = task['requests']
+            media = task['media']
+            requests['timing']['client_sent'] = t_now
 
-            if t_now > task['timing']['t_expiration']:
+            if t_now > requests['timing']['t_expiration']:
                 # Task waiting for too long in the queue; discard it.
                 #print('skip frame')
                 pass
 
             else:
-                delay = t_now - task['agent']['t_frame']
-                print('frame to http request', delay, task['requests'][0]['services'][0]['mode'])
+                delay = t_now - requests['agent']['t_frame']
+                print('frame to http request', delay, requests['requests'][0]['services'][0]['mode'])
 
-                postdata = json.dumps(task)
+                postdata = json.dumps(requests)
+
+                # Compose body for multipart/mixed
+                boundary = b'503bee19f7d84230ac99c3d32d2ba67c'
+                delimiter = b'\r\n--' + boundary # RFC 7578 Section 4.1
+
+                parts = [
+                    {
+                        'name': b'requests',
+                        'type': b'application/json; charset=utf-8',
+                        'content': postdata.encode('utf-8'),
+                    },
+                    {
+                        'name': b'media',
+                        'type': b'image/jpeg',
+                        'content': media,
+                    },
+                ]
+
+                body = b'\r\n'
+                #body += b'preamble' # Preamble defined in RFC 1341
+                
+                for part in parts:
+                    body += delimiter + b'\r\n'
+                    # Each part must contain a Content-Disposition header with name, as described in RFC 7578 Section 4.2
+                    body += b'Content-Disposition: form-data; name="' + part['name'] + b'"\r\n'
+                    body += b'Content-type: ' + part['type'] + b'\r\n\r\n'
+                    body += part['content'] + b'\r\n'
+                
+                body += delimiter + b'--\r\n\r\n'
+                #body += b'epilogue' # Epilogue defined in RFC 1341
+                
                 try:
                     #self.response = None
-                    url = task['endpoint']
-                    r = http.request('POST', url,
-                        body=postdata.encode(),
-                        headers={'Content-Type': 'application/json; charset=utf-8'},
-                    )
+                    url = requests['endpoint']
+                    r = http.request('POST',
+                            url,
+                            #body=postdata.encode(),
+                            body=body,
+                            headers={'Content-Type': 'multipart/form-data; boundary="{}"'.format(boundary.decode())},
+                        )
                     if r.status==200:
                         t_now = time.time() * 1000
                         response = json.loads(r.data.decode())
                         timing = response['timing']
-                        server_time = timing['server_sent'] - timing['server_rcv']
                         total_time = t_now - timing['client_sent']
+                        server_time = timing['server_sent'] - timing['server_rcv']
                         client_time = total_time - server_time
 
                         timing_stats['server']['count'] += 1
@@ -195,10 +231,10 @@ class ThreadUrl(threading.Thread):
                         print()
 
                         #print(len(response['responses'][0]['services'][0]['results']['rectangles']))
-                        response['agent'] = task['agent']
+                        response['agent'] = requests['agent']
                         if not self.out_queue.full():
                             self.out_queue.put_nowait(response)
-                        print('frame to http response', t_now - task['agent']['t_frame'])
+                        print('frame to http response', t_now - requests['agent']['t_frame'])
                         #print('response time:', total_time)
                     else:
                         print(r.status, r.data.decode())
@@ -298,9 +334,9 @@ def main(args):
                     "requests": [
                         {
                             "requestId": "3287de74a3c742ccc81e80eab881eaec",
-                            "media": {
-                                "content": base64.b64encode(bin_data).decode()
-                            },
+                            #"media": {
+                            #    "content": base64.b64encode(bin_data).decode()
+                            #},
                             "services": [
                                 {
                                     "type": "face",
@@ -320,7 +356,7 @@ def main(args):
                     'agent': {
                         'agentId': AGENT_ID,
                         't_frame': t_frame,
-                        #'debug': 1,
+                        'debug': 1,
                     },
                     'timing': {
                         'client_sent': time.time() * 1000,
@@ -333,7 +369,10 @@ def main(args):
                     # in_queue is full
                     pass
                 else:
-                    in_queue.put_nowait(requests)
+                    in_queue.put_nowait({
+                        'requests': requests,
+                        'media': bin_data.tobytes(),
+                    })
                     #print('qsize', in_queue.qsize())
 
                 f_ = 0
