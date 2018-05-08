@@ -182,26 +182,22 @@ class PredictHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
         self.set_header('Content-Type', 'application/json')
 
-    def __format_image(self, media):
+    def __format_image(self, bindata):
         """
         - Convert portable text media to pixel array
         - Object media is JSON compliant
         - Object media has one of the members:
           'url' - URL to an online source
-          'content' - Base 64 encoded JPEG data
+          'content' - BASE64 encoded JPEG data
         - Formatted pixel array for CNN is in RGB channel order
         - Formatted pixel array for CNN has dtype=np.float
         - Formatted pixel array for CNN has pixel values normalized to range [0, 1]
         """
         img = None
-        if 'content' in media:
-            bindata = base64.b64decode(media['content'].encode())
-            img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
-        elif 'url' in media:
-            raise(NotImplementedError)
-            pass
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = (img.astype(np.float32)) / 255.
+        img = cv2.imdecode(np.frombuffer(bindata, np.uint8), 1)
+        if img is not None:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = (img.astype(np.float32)) / 255.
         return img
 
     def get(self):
@@ -218,26 +214,62 @@ class PredictHandler(tornado.web.RequestHandler):
         except AttributeError:
             self.out_queue = Queue()
 
-        if self.request.body:
-            try:
-                postdata = self.request.body.decode('utf-8')
-            except ValueError:
-                self.set_status(400)
-                self.finish('Unable to decode as UTF-8')
-                debug('Unable to decode as UTF-8 {}'.format(postdata))
-                return
+        requests = None
+        img = None
 
-            try:
-                json_data = json.loads(postdata)
-            except ValueError:
-                self.set_status(400)
-                self.finish('Unable to parse JSON')
-                debug('Unable to parse JSON {}'.format(postdata))
-                return
+        print()
+        print()
+        print(self.request.headers)
+        print()
 
+        if len(self.request.body_arguments):
+            # multipart/form-data
+            print('multipart/form-data')
+            for name in self.request.body_arguments:
+                part = self.request.body_arguments[name][0]
+                print(name, part[0:32])
+                print()
+                if name=='requests':
+                    requests = part
+                elif name=='media':
+                    if len(part) > 2*1024*1024:
+                        self.set_status(413)
+                        self.finish('Content of media too large')
+                        return
+                    img = self.__format_image(part)
+                    if img is None:
+                        self.set_status(415)
+                        self.finish("Unable to load media")
+                        return
+
+        elif self.request.body:
+            # Base64-encode media and store in JSON
+            requests = self.request.body
+
+        try:
+            requests = requests.decode('utf-8')
+            print(requests)
+        except ValueError:
+            self.set_status(400)
+            self.finish('Unable to decode as UTF-8')
+            self.log_exception()
+            return
+
+        print()
+        print()
+
+        try:
+            requests = json.loads(requests)
+        except ValueError:
+            self.set_status(400)
+            self.finish('Unable to parse JSON')
+            self.log_exception()
+            return
+
+        if requests is not None and img is not None:
             try:
-                if 'agent' in json_data and 'debug' in json_data['agent'] and json_data['agent']['debug']:
-                    original_request = copy.deepcopy(json_data)
+                if 'agent' in requests and 'debug' in requests['agent'] and requests['agent']['debug']:
+                    original_request = copy.deepcopy(requests)
                     for request in original_request['requests']:
                         if 'media' in request and 'content' in request['media']:
                             request['media']['content_length'] = len(request['media']['content'])
@@ -247,8 +279,8 @@ class PredictHandler(tornado.web.RequestHandler):
                     json_str_debug = json.dumps(original_request, cls=NumpyEncoder)
                     debug('Detection request ' + json_str_debug)
 
-                if 'timing' in json_data:
-                    json_data['timing']['server_rcv'] = time.time() * 1000
+                if 'timing' in requests:
+                    requests['timing']['server_rcv'] = time.time() * 1000
 
                 """
                 - One or multiple predict request could be included in single HTTP POST
@@ -257,40 +289,42 @@ class PredictHandler(tornado.web.RequestHandler):
                 - For each service, 'type' and 'model' must be specified
                 - For each service type, options are type dependent
                 """
-                if 'requests' not in json_data:
+                if 'requests' not in requests:
                     self.set_status(400)
                     self.finish("Requests must be enclosed in 'requests' attribute as a list of request")
                     return
-                for request in json_data['requests']:
+                for request in requests['requests']:
                     if 'services' not in request:
                         self.set_status(400)
                         self.finish("Services must be enclosed in 'services' attribute for request " + request['requestId'])
                         return
 
-                    img = None
-
                     for service in request['services']:
                         #print(service)
                         service_timing = {}
-
-                        if 'media' not in request:
-                            self.set_status(400)
-                            self.finish('Media is empty for request ' + request['requestId'])
-                            return
-                        if 'content' in request['media']:
-                            # Hard-cap length of media/contant at 2MB to save server resource
-                            if len(request['media']['content']) > 2*1024*1024:
-                                self.set_status(413)
-                                self.finish('Content of media too large for request ' + request['requestId'])
-                                return
 
                         if 'type' not in service:
                             self.set_status(400)
                             self.finish("'type' attribute of a service must be specified for request " + request['requestId'])
                             return
 
+                        # Decode BASE64 encoded JPEG image in JSON
                         t_ = time.time()
-                        if img is None: img = self.__format_image(request['media'])
+                        if img is None:
+                            if 'media' not in request:
+                                self.set_status(400)
+                                self.finish('Media is empty for request ' + request['requestId'])
+                                return
+                            if 'content' in request['media']:
+                                # Hard-cap length of media/contant at 2MB to save server resource
+                                if len(request['media']['content']) > 2*1024*1024:
+                                    self.set_status(413)
+                                    self.finish('Content of media too large for request ' + request['requestId'])
+                                    return
+                                img = self.__format_image(base64.b64decode(request['media']['content'].encode()))
+                            elif 'url' in request['media']:
+                                raise(NotImplementedError)
+                                pass
                         if img is None:
                             self.set_status(415)
                             self.finish("Unable to load media for request " + request['requestId'])
@@ -308,7 +342,7 @@ class PredictHandler(tornado.web.RequestHandler):
                             params = {
                                 'service': service,
                                 'output_holder': self.out_queue,
-                                'agent': json_data['agent']
+                                'agent': requests['agent']
                             }
                             if face_app.detect(img, params=params):
                                 # Call get() to block and wait for detection result
@@ -350,28 +384,31 @@ class PredictHandler(tornado.web.RequestHandler):
                     request.pop('media', None)
 
             except:
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                error('\n'.join(['Bad Request: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
                 self.set_status(500)
+                self.log_exception()
                 return
     
-            #print('json decoded', json_data)
+            #print('json decoded', request)
 
         # Set up response dictionary.
-        #self.response = json_data
+        #self.response = request
         #print(self.response)
-        if 'timing' in json_data:
-            json_data['timing']['server_sent'] = time.time()*1000
+        if 'timing' in requests:
+            requests['timing']['server_sent'] = time.time()*1000
 
-        json_data['responses'] = json_data['requests']
-        json_data.pop('requests', None)
+        requests['responses'] = requests['requests']
+        requests.pop('requests', None)
 
-        json_str = json.dumps(json_data, cls=NumpyEncoder)
+        json_str = json.dumps(requests, cls=NumpyEncoder)
 
         info('Response, latency: {}'.format(time.time()*1000-t_now))
 
         self.write(json_str)
         self.finish()
+
+    def log_exception(self):
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        error('\n'.join(['Exception: {}'.format(threading.current_thread())] + list(traceback.format_tb(exc_traceback, limit=32)) + [exc_type.__name__+': '+str(exc_value),]))
 
 def make_app():
     return tornado.web.Application([
